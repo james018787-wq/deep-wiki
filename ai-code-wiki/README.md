@@ -145,6 +145,11 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 | `GIT_CLONE_DIR` | git.clone_dir | ./repo_cache | 代码仓库本地克隆目录 |
 | `API_SECRET_KEY` | —（鉴权中间件直接读取） | 空 | API 密钥，为空时 `/api/v1` 鉴权关闭；非空时请求需带请求头 `X-Api-Secret` |
 | `WEBHOOK_SECRET` | —（webhook 处理器直接读取） | 空 | webhook 签名密钥，为空时跳过签名校验（开发环境）；非空时 GitLab/Gitee 回调需携带对应 Token/签名，校验失败返回 403 |
+| `TASK_QUEUE_DRIVER` | task_queue.driver | memory | 异步任务队列驱动：`memory`（开发，内存 channel）/ `rabbitmq`（生产，消息持久化 + 手动 ACK） |
+| `RABBITMQ_URL` | task_queue.rabbitmq_url | 空 | RabbitMQ 连接地址，如 `amqp://user:pass@host:5672/`（`TASK_QUEUE_DRIVER=rabbitmq` 时必填） |
+| `TASK_QUEUE_NAME` | task_queue.queue_name | ai-code-wiki-task | 任务队列名（RabbitMQ 下自动创建持久化队列） |
+| `TASK_QUEUE_MAX_RETRY` | task_queue.max_retry | 3 | 任务最大重试次数，消费失败自动重投，超过上限标记任务失败 |
+| `TASK_QUEUE_CONCURRENCY` | task_queue.concurrency | 2 | 任务消费协程数（内存与 RabbitMQ 均生效） |
 
 > 说明：
 > - `API_SECRET_KEY` 由 `internal/middleware` 直接读取，不经过 config.yaml。
@@ -223,10 +228,10 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
 ### 5.2 MVP 已知限制
 
 - **PHP 解析**：基于正则的简易实现，不做深度 AST，可能误匹配（注释/字符串规避已处理，匿名函数/泛型等特殊场景见 `pkg/astphp` 注释）。
-- **向量引擎**：仅实现 Chroma 查询，`pkg/vector.New` 的 Milvus/Redis/Faiss 分支为预留，未实现。
+- **向量引擎**：默认 Chroma/Milvus 已实现（`VECTOR_DRIVER` 切换），Redis/Faiss 未实现。
 - **LLM 依赖**：文档生成、检索回答、需求分析均依赖外部大模型服务，未内置模型。
 - **鉴权**：仅单密钥（`API_SECRET_KEY`），无 RBAC、无用户体系。
-- **任务队列**：异步任务直接在 goroutine 本地执行，未接入真实 MQ（已抽象 `pkg/taskqueue` 接口）。
+- **任务队列**：已抽象 `pkg/taskqueue` 接口（`SubmitTask`/`ConsumeTask`），默认内存队列，生产可切换 RabbitMQ（`TASK_QUEUE_DRIVER=rabbitmq`）；消费失败自动重试，超过上限标记任务失败。
 - **日志**：仅控制台输出，文件输出已留扩展点（`logger.NewFileSink` / `logger.SetOutput`），未启用。
 - **人工删除依赖与 AST 重加**：人工删除的关系在后续自动任务中"不被 AST 重新添加"的标记逻辑待完善。
 - **源码变更复核**：`source_code_changed=1` 的待复核流程仅有标记，复核页面/接口未实现。
@@ -244,8 +249,9 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
    - `pkg/vector` 已抽象 `Client` 接口（Upsert/Delete/Search）与 `vector.engine` 配置项；
    - 切换到 Milvus 时实现 `Client` 接口并在 `New()` 中按 engine 分发，上层 `search_service` / `doc_service` 无需改动。
 5. **替换 MQ（生产化异步任务）**
-   - `pkg/taskqueue.TaskQueue` 接口当前为 goroutine 本地实现；
-   - 生产可替换为 RabbitMQ / Kafka：实现 `SubmitAsyncTask`（序列化任务投递到队列/topic，消费者执行，支持 ACK/重试/扩容），仅需替换 `taskqueue.Default` 指向的实现，业务代码零改动。
+   - `pkg/taskqueue.TaskQueue` 提供 `SubmitTask`/`ConsumeTask` 抽象接口，已实现 `memory`（开发，内存 channel）与 `rabbitmq`（生产，amqp091-go，消息持久化 + 手动 ACK）两种实现；
+   - 通过 `TASK_QUEUE_DRIVER` 环境变量切换，配合 `RABBITMQ_URL` / `TASK_QUEUE_NAME` / `TASK_QUEUE_MAX_RETRY` / `TASK_QUEUE_CONCURRENCY`；
+   - 解析任务 / 向量更新任务统一投递到队列，由独立后台消费协程执行，失败自动重投（`retry_count` 记录），超过最大重试次数标记任务失败。
 6. **数据安全与备份**
    - 定期备份 MySQL 数据卷；开启 `restart: always` 保障自愈；健康检查失败会触发容器重启，需保证 MySQL/LLM 先行就绪（`depends_on: service_healthy`）。
 7. **日志与监控**
@@ -308,5 +314,6 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
 | task_id | 任务唯一标识（唯一） |
 | branch | 代码分支 |
 | status | 0=待执行 1=执行中 2=成功 3=失败 |
+| retry_count | 失败重试次数（队列消费失败重新投递时自增，状态置回待执行） |
 | err_msg | 错误信息 |
 | finish_time | 完成时间 |

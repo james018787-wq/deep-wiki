@@ -12,11 +12,12 @@ import (
 
 // Config 全局配置根节点，对应 config/config.yaml。
 type Config struct {
-	Server ServerConfig `yaml:"server"`
-	MySQL  MySQLConfig  `yaml:"mysql"`
-	Git    GitConfig    `yaml:"git"`
-	Vector VectorConfig `yaml:"vector"`
-	LLM    LLMConfig    `yaml:"llm"`
+	Server    ServerConfig    `yaml:"server"`
+	MySQL     MySQLConfig     `yaml:"mysql"`
+	Git       GitConfig       `yaml:"git"`
+	Vector    VectorConfig    `yaml:"vector"`
+	TaskQueue TaskQueueConfig `yaml:"task_queue"`
+	LLM       LLMConfig       `yaml:"llm"`
 }
 
 // ServerConfig 服务运行配置。
@@ -41,8 +42,8 @@ type MySQLConfig struct {
 
 // GitConfig 代码仓库配置。
 type GitConfig struct {
-	RepoURL      string `yaml:"repo_url"`
-	CloneDir     string `yaml:"clone_dir"`
+	RepoURL       string `yaml:"repo_url"`
+	CloneDir      string `yaml:"clone_dir"`
 	DefaultBranch string `yaml:"default_branch"`
 }
 
@@ -52,9 +53,18 @@ type VectorConfig struct {
 	Host       string `yaml:"host"`   // chroma: CHROMA_URL 解析；milvus: MILVUS_HOST
 	Port       int    `yaml:"port"`   // milvus: MILVUS_PORT，默认 19530
 	Collection string `yaml:"collection"`
-	Dim        int    `yaml:"dim"`    // embedding 向量维度（Milvus 建集合用，MILVUS_DIM 覆盖）
-	User       string `yaml:"user"`   // Milvus 用户名（可选，开启鉴权时必填，MILVUS_USER）
+	Dim        int    `yaml:"dim"`      // embedding 向量维度（Milvus 建集合用，MILVUS_DIM 覆盖）
+	User       string `yaml:"user"`     // Milvus 用户名（可选，开启鉴权时必填，MILVUS_USER）
 	Password   string `yaml:"password"` // Milvus 密码（可选，MILVUS_PASSWORD）
+}
+
+// TaskQueueConfig 异步任务队列配置。
+type TaskQueueConfig struct {
+	Driver      string `yaml:"driver"`       // 队列驱动：memory / rabbitmq（TASK_QUEUE_DRIVER）
+	RabbitMQURL string `yaml:"rabbitmq_url"` // RabbitMQ 连接地址（RABBITMQ_URL）
+	QueueName   string `yaml:"queue_name"`   // 队列名（TASK_QUEUE_NAME，默认 ai-code-wiki-task）
+	MaxRetry    int    `yaml:"max_retry"`    // 任务最大重试次数（TASK_QUEUE_MAX_RETRY，默认 3）
+	Concurrency int    `yaml:"concurrency"`  // 消费协程数（TASK_QUEUE_CONCURRENCY，默认 2）
 }
 
 // LLMConfig 大模型配置。
@@ -119,6 +129,13 @@ func (c *Config) ApplyEnv() {
 	}
 	c.Vector.User = envStr("MILVUS_USER", c.Vector.User)
 	c.Vector.Password = envStr("MILVUS_PASSWORD", c.Vector.Password)
+
+	// 异步任务队列（TASK_QUEUE_DRIVER=memory/rabbitmq，生产环境用 rabbitmq）
+	c.TaskQueue.Driver = envStr("TASK_QUEUE_DRIVER", c.TaskQueue.Driver)
+	c.TaskQueue.RabbitMQURL = envStr("RABBITMQ_URL", c.TaskQueue.RabbitMQURL)
+	c.TaskQueue.QueueName = envStr("TASK_QUEUE_NAME", c.TaskQueue.QueueName)
+	c.TaskQueue.MaxRetry = envInt("TASK_QUEUE_MAX_RETRY", c.TaskQueue.MaxRetry)
+	c.TaskQueue.Concurrency = envInt("TASK_QUEUE_CONCURRENCY", c.TaskQueue.Concurrency)
 
 	// LLM 服务地址（Python 微服务）
 	c.LLM.BaseURL = envStr("LLM_SERVICE_URL", c.LLM.BaseURL)

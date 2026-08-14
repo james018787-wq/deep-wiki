@@ -29,6 +29,7 @@ type TaskStatusResult struct {
 	Branch     string     `json:"branch"`      // 代码分支
 	Status     int8       `json:"status"`      // 任务状态：0待执行 1执行中 2成功 3失败
 	StatusDesc string     `json:"status_desc"` // 任务状态描述
+	RetryCount int        `json:"retry_count"` // 失败重试次数（队列消费失败重新投递时自增）
 	ErrMsg     string     `json:"err_msg"`     // 错误信息
 	CreateTime time.Time  `json:"create_time"` // 创建时间
 	FinishTime *time.Time `json:"finish_time"` // 完成时间
@@ -50,6 +51,7 @@ func (s *TaskQueryService) GetStatus(ctx context.Context, taskID string) (*TaskS
 		Branch:     record.Branch,
 		Status:     record.Status,
 		StatusDesc: taskStatusDesc(record.Status),
+		RetryCount: record.RetryCount,
 		ErrMsg:     record.ErrMsg,
 		CreateTime: record.CreateTime,
 		FinishTime: record.FinishTime,

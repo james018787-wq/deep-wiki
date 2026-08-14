@@ -33,15 +33,15 @@ type TaskService struct {
 	db         *gorm.DB
 	taskRepo   *repo.TaskRecordRepo
 	docRepo    *repo.CodeFunctionDocRepo
-	gitCfg     *config.GitConfig    // git 仓库配置
-	llmBaseURL string               // Python LLM 服务地址（LLM_SERVICE_URL）
-	vc         vector.VectorClient  // 向量存储抽象（业务不感知 chroma/milvus）
-	queue      taskqueue.TaskQueue  // 异步任务队列（当前默认 goroutine 本地实现，可替换为 MQ）
+	gitCfg     *config.GitConfig   // git 仓库配置
+	llmBaseURL string              // Python LLM 服务地址（LLM_SERVICE_URL）
+	vc         vector.VectorClient // 向量存储抽象（业务不感知 chroma/milvus）
+	queue      taskqueue.TaskQueue // 异步任务队列（提交入口，消费由独立 Worker 完成）
 }
 
 // NewTaskService 构建任务服务。
 // vc 为 nil 时跳过向量同步（向量引擎未配置/初始化失败场景）。
-func NewTaskService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient) *TaskService {
+func NewTaskService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient, queue taskqueue.TaskQueue) *TaskService {
 	return &TaskService{
 		db:         db,
 		taskRepo:   newTaskRepo(db),
@@ -49,7 +49,7 @@ func NewTaskService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient) *Ta
 		gitCfg:     &cfg.Git,
 		llmBaseURL: cfg.LLM.BaseURL,
 		vc:         vc,
-		queue:      taskqueue.Default,
+		queue:      queue,
 	}
 }
 
@@ -67,8 +67,9 @@ type TriggerTaskReq struct {
 //  3. 任务在后台 goroutine 执行，不阻塞主 HTTP 接口。
 //
 // 任务流水线：
-//  接收task -> git拉取代码 -> git diff获取变更文件 -> 过滤.go/.php文件
-//  -> 按扩展名解析（.go走go ast，.php走简易正则）提取函数 -> 调用Python LLM服务生成业务文档。
+//
+//	接收task -> git拉取代码 -> git diff获取变更文件 -> 过滤.go/.php文件
+//	-> 按扩展名解析（.go走go ast，.php走简易正则）提取函数 -> 调用Python LLM服务生成业务文档。
 func (s *TaskService) TriggerTask(ctx context.Context, req *TriggerTaskReq) (*model.TaskRecord, error) {
 	_ = ctx
 
@@ -95,16 +96,17 @@ func (s *TaskService) TriggerTask(ctx context.Context, req *TriggerTaskReq) (*mo
 		return nil, common.WrapError(common.CodeInternalError, "创建任务失败", err)
 	}
 
-	// 3. 异步队列提交任务流水线，不阻塞主 HTTP 接口
-	//（当前为 goroutine 本地执行，生产环境可替换为 RabbitMQ/Kafka）
-	s.queue.SubmitAsyncTask(func() {
-		s.runPipeline(record)
-	})
+	// 3. 投递异步任务队列（替换直接 goroutine），由独立 consumer 后台协程消费执行
+	if err := s.submitPipelineTask(req.TaskID); err != nil {
+		_ = s.MarkFailed(req.TaskID, "任务投递队列失败: "+err.Error())
+		return nil, common.WrapError(common.CodeInternalError, "任务投递队列失败", err)
+	}
 	return record, nil
 }
 
 // runPipeline 任务流水线执行入口：负责状态流转与整体错误兜底。
-func (s *TaskService) runPipeline(record *model.TaskRecord) {
+// 返回 error 时由消费 Worker 决定重试或标记失败（不在此处直接 MarkFailed）。
+func (s *TaskService) runPipeline(record *model.TaskRecord) error {
 	ctx := context.Background()
 
 	if err := s.MarkRunning(record.TaskID); err != nil {
@@ -112,12 +114,14 @@ func (s *TaskService) runPipeline(record *model.TaskRecord) {
 	}
 
 	if err := s.process(ctx, record); err != nil {
-		_ = s.MarkFailed(record.TaskID, err.Error())
 		logger.Error(ctx, "任务 %s 执行失败: %v", record.TaskID, err)
-		return
+		return err
 	}
-	_ = s.MarkSuccess(record.TaskID)
+	if err := s.MarkSuccess(record.TaskID); err != nil {
+		logger.Warn(ctx, "任务 %s 标记成功失败: %v", record.TaskID, err)
+	}
 	logger.Info(ctx, "任务 %s 执行成功", record.TaskID)
+	return nil
 }
 
 // HandleGitPush 处理代码托管平台 webhook 分支 push 回调。
@@ -170,12 +174,22 @@ func (s *TaskService) HandleGitPush(ctx context.Context, event *webhook.PushEven
 		return nil, common.WrapError(common.CodeInternalError, "创建任务失败", err)
 	}
 
-	// 投递任务队列，异步执行增量解析流水线，不阻塞 webhook 响应
-	s.queue.SubmitAsyncTask(func() {
-		s.runPipeline(record)
-	})
+	// 投递任务队列（替换直接 goroutine），异步执行增量解析流水线，不阻塞 webhook 响应
+	if err := s.submitPipelineTask(taskID); err != nil {
+		_ = s.MarkFailed(taskID, "任务投递队列失败: "+err.Error())
+		return nil, common.WrapError(common.CodeInternalError, "任务投递队列失败", err)
+	}
 	logger.Info(ctx, "webhook 触发解析任务成功 task_id=%s branch=%s", taskID, event.Branch)
 	return record, nil
+}
+
+// submitPipelineTask 构建并投递代码解析任务到异步任务队列。
+func (s *TaskService) submitPipelineTask(taskID string) error {
+	msg, err := buildPipelineMessage(taskID)
+	if err != nil {
+		return err
+	}
+	return s.queue.SubmitTask(msg)
 }
 
 // genWebhookTaskID 生成幂等任务 id：仓库+branch+after commit 的 sha1 摘要。
@@ -446,25 +460,20 @@ func (s *TaskService) generateDoc(moduleName, filePath, codeContent string) (*ll
 	return &data, string(apiResp.Data), nil
 }
 
-// syncVector 同步向量库（best-effort，失败仅记录日志）。
-// 通过异步任务队列执行，避免阻塞主流程。
+// syncVector 投递向量同步任务到队列（best-effort，投递失败仅记录日志）。
+// 消费由独立 Worker 完成，保证检索使用最新校正内容。
 func (s *TaskService) syncVector(doc *model.CodeFunctionDoc) {
 	if doc == nil || doc.ID <= 0 || s.vc == nil {
 		return
 	}
-	s.queue.SubmitAsyncTask(func() {
-		content := strings.Join([]string{doc.Summary, doc.ProcessFlow, doc.RiskPoint}, "\n")
-		dv := &vector.DocVector{
-			DocID:      doc.ID,
-			ModuleName: doc.ModuleName,
-			FilePath:   doc.FilePath,
-			FuncName:   doc.FuncName,
-			Content:    content,
-		}
-		if err := s.vc.UpsertDoc(dv); err != nil {
-			logger.Warn(context.Background(), "同步向量失败 doc_id=%d err=%v", doc.ID, err)
-		}
-	})
+	msg, err := buildVectorSyncMessage(doc)
+	if err != nil {
+		logger.Warn(context.Background(), "构建向量同步任务失败 doc_id=%d err=%v", doc.ID, err)
+		return
+	}
+	if err := s.queue.SubmitTask(msg); err != nil {
+		logger.Warn(context.Background(), "向量同步任务投递失败 doc_id=%d err=%v", doc.ID, err)
+	}
 }
 
 // moduleNameFromPath 从文件路径推导业务模块名（取首段目录）。

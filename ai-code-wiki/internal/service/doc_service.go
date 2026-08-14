@@ -25,13 +25,13 @@ type DocService struct {
 	modifyLog  *repo.DocModifyLogRepo
 	changeLog  *repo.CodeChangeLogRepo
 	moduleRepo *repo.BusinessModuleRepo
-	vc         vector.VectorClient   // 向量存储抽象（业务不感知 chroma/milvus）
-	queue      taskqueue.TaskQueue   // 异步任务队列（当前默认 goroutine 本地实现，可替换为 MQ）
+	vc         vector.VectorClient // 向量存储抽象（业务不感知 chroma/milvus）
+	queue      taskqueue.TaskQueue // 异步任务队列（提交入口，消费由独立 Worker 完成）
 }
 
 // NewDocService 构建文档服务。
 // vc 为 nil 时跳过向量同步（向量引擎未配置/初始化失败场景）。
-func NewDocService(db *gorm.DB, vc vector.VectorClient) *DocService {
+func NewDocService(db *gorm.DB, vc vector.VectorClient, queue taskqueue.TaskQueue) *DocService {
 	return &DocService{
 		db:         db,
 		docRepo:    newDocRepo(db),
@@ -39,7 +39,7 @@ func NewDocService(db *gorm.DB, vc vector.VectorClient) *DocService {
 		changeLog:  repo.NewCodeChangeLogRepo(db),
 		moduleRepo: repo.NewBusinessModuleRepo(db),
 		vc:         vc,
-		queue:      taskqueue.Default,
+		queue:      queue,
 	}
 }
 
@@ -79,13 +79,13 @@ func (s *DocService) GetDoc(ctx context.Context, docID int64) (*model.CodeFuncti
 
 // EditDocReq 人工校正文档入参。
 type EditDocReq struct {
-	Summary     string `json:"summary"`      // 业务摘要
-	InputDesc   string `json:"input_desc"`   // 入参说明
-	OutputDesc  string `json:"output_desc"`  // 返回值说明
-	ProcessFlow string `json:"process_flow"` // 业务执行流程
-	RiskPoint   string `json:"risk_point"`   // 业务风险点
+	Summary     string `json:"summary"`                     // 业务摘要
+	InputDesc   string `json:"input_desc"`                  // 入参说明
+	OutputDesc  string `json:"output_desc"`                 // 返回值说明
+	ProcessFlow string `json:"process_flow"`                // 业务执行流程
+	RiskPoint   string `json:"risk_point"`                  // 业务风险点
 	Operator    string `json:"operator" binding:"required"` // 操作人
-	Remark      string `json:"remark"`       // 备注
+	Remark      string `json:"remark"`                      // 备注
 }
 
 // EditDoc 人工校正业务文档。
@@ -280,30 +280,21 @@ func restoreFromOriginDoc(doc *model.CodeFunctionDoc) error {
 	return nil
 }
 
-// syncVectorAsync 事务提交后异步同步向量库。
-// 最小切片单元=单个函数，失败仅记录日志，不阻塞主流程。
-// 通过异步任务队列执行，避免直接 goroutine。
+// syncVectorAsync 事务提交后投递向量同步任务到队列。
+// 最小切片单元=单个函数，投递失败仅记录日志，不阻塞主流程。
+// 消费由独立 Worker 完成（替换直接 goroutine）。
 func (s *DocService) syncVectorAsync(doc *model.CodeFunctionDoc) {
 	if doc == nil || s.vc == nil {
 		return
 	}
-	s.queue.SubmitAsyncTask(func() {
-		content := strings.Join([]string{
-			doc.Summary,
-			doc.ProcessFlow,
-			doc.RiskPoint,
-		}, "\n")
-		dv := &vector.DocVector{
-			DocID:      doc.ID,
-			ModuleName: doc.ModuleName,
-			FilePath:   doc.FilePath,
-			FuncName:   doc.FuncName,
-			Content:    content,
-		}
-		if err := s.vc.UpsertDoc(dv); err != nil {
-			logger.Warn(context.Background(), "同步向量库失败 doc_id=%d err=%v", doc.ID, err)
-		}
-	})
+	msg, err := buildVectorSyncMessage(doc)
+	if err != nil {
+		logger.Warn(context.Background(), "构建向量同步任务失败 doc_id=%d err=%v", doc.ID, err)
+		return
+	}
+	if err := s.queue.SubmitTask(msg); err != nil {
+		logger.Warn(context.Background(), "向量同步任务投递失败 doc_id=%d err=%v", doc.ID, err)
+	}
 }
 
 // ListModifiedDocs 查询所有人工校正文档。

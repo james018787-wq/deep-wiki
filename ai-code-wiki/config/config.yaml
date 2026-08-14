@@ -33,6 +33,15 @@ vector:
   user: ""   # milvus 用户名（可选，开启鉴权时必填；MILVUS_USER）
   password: "" # milvus 密码（可选；MILVUS_PASSWORD）
 
+# 异步任务队列配置
+# 驱动由 TASK_QUEUE_DRIVER 环境变量选择：memory（开发）/ rabbitmq（生产，默认 memory）
+task_queue:
+  driver: memory
+  rabbitmq_url: "" # RabbitMQ 连接地址（amqp://user:pass@host:port/，RABBITMQ_URL）
+  queue_name: ai-code-wiki-task
+  max_retry: 3    # 任务最大重试次数（TASK_QUEUE_MAX_RETRY）
+  concurrency: 2  # 消费协程数（TASK_QUEUE_CONCURRENCY）
+
 # AI 大模型配置
 llm:
   provider: "" # openai / ollama / deepseek 等

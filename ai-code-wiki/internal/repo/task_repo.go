@@ -2,6 +2,7 @@ package repo
 
 import (
 	"ai-code-wiki/internal/model"
+	"ai-code-wiki/pkg/common"
 
 	"gorm.io/gorm"
 )
@@ -54,4 +55,11 @@ func (r *TaskRecordRepo) UpdateStatus(taskID string, status int8, errMsg string)
 	return r.DB.Model(&model.TaskRecord{}).
 		Where("task_id = ?", taskID).
 		Updates(map[string]any{"status": status, "err_msg": errMsg}).Error
+}
+
+// IncrementRetry 记录失败重试：更新重试次数并置回待执行状态（等待重新消费）。
+func (r *TaskRecordRepo) IncrementRetry(taskID string, count int) error {
+	return r.DB.Model(&model.TaskRecord{}).
+		Where("task_id = ?", taskID).
+		Updates(map[string]any{"retry_count": count, "status": common.TaskStatusPending}).Error
 }
