@@ -25,6 +25,7 @@ type Service struct {
 	Search      *SearchService
 	Relation    *RelationService
 	Requirement *RequirementService
+	Report      *ReportService
 
 	TaskQueue  taskqueue.TaskQueue // 异步任务队列（SubmitTask 提交，worker 消费）
 	TaskWorker *TaskWorker         // 独立消费协程 Worker（消费解析/向量任务）
@@ -75,6 +76,7 @@ func NewService(db *gorm.DB, cfg *config.Config) (*Service, error) {
 		Search:      searchSvc,
 		Relation:    NewRelationService(db),
 		Requirement: NewRequirementService(searchSvc, cfg),
+		Report:      NewReportService(db),
 		TaskQueue:   queue,
 		TaskWorker:  NewTaskWorker(queue, taskSvc, vc, cfg.TaskQueue.MaxRetry, cfg.TaskQueue.Concurrency),
 	}

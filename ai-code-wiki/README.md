@@ -182,6 +182,7 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 | POST | `/api/v1/relation/add` | 人工新增依赖（写操作日志） |
 | DELETE | `/api/v1/relation` | 删除依赖（逻辑删除 + 操作日志） |
 | POST | `/api/v1/requirement/analyze` | 需求分析，body: `{user_requirement}` |
+| GET | `/api/v1/report/basic` | 基础统计：总文档数 / 人工校正数 / 自动生成数 / 待复核数 / 模块总数 |
 
 ### 4.2 极简前端
 

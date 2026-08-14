@@ -13,6 +13,7 @@ type Handler struct {
 	Relation    *RelationHandler
 	Requirement *RequirementHandler
 	Webhook     *WebhookHandler
+	Report      *ReportHandler
 }
 
 // NewHandler 构建处理器聚合对象。
@@ -23,5 +24,6 @@ func NewHandler(svc *service.Service) *Handler {
 	h.Relation = NewRelationHandler(svc)
 	h.Requirement = NewRequirementHandler(svc)
 	h.Webhook = NewWebhookHandler(svc)
+	h.Report = NewReportHandler(svc)
 	return h
 }

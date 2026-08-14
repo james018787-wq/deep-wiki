@@ -68,6 +68,10 @@ func Register(r *gin.Engine, h *handler.Handler) {
 		// ========== 需求分析 ==========
 		// 新产品需求分析
 		api.POST("/requirement/analyze", h.Requirement.Analyze)
+
+		// ========== 知识库统计 ==========
+		// 基础统计（文档/校正/待复核/模块数量）
+		api.GET("/report/basic", h.Report.Basic)
 	}
 
 	// ========== 极简前端静态页面（原生 HTML + Vue3 CDN，无构建） ==========
