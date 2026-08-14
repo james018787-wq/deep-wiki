@@ -7,11 +7,12 @@ import (
 
 // Handler 聚合所有 HTTP 处理器，注入业务服务。
 type Handler struct {
-	Service *service.Service
+	Service     *service.Service
 	Task        *TaskHandler
 	Doc         *DocHandler
 	Relation    *RelationHandler
 	Requirement *RequirementHandler
+	Webhook     *WebhookHandler
 }
 
 // NewHandler 构建处理器聚合对象。
@@ -21,5 +22,6 @@ func NewHandler(svc *service.Service) *Handler {
 	h.Doc = NewDocHandler(svc)
 	h.Relation = NewRelationHandler(svc)
 	h.Requirement = NewRequirementHandler(svc)
+	h.Webhook = NewWebhookHandler(svc)
 	return h
 }

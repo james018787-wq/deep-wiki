@@ -144,6 +144,7 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 | `LLM_SERVICE_URL` | llm.base_url | http://ai-wiki-llm:9000 | Python LLM 微服务地址 |
 | `GIT_CLONE_DIR` | git.clone_dir | ./repo_cache | 代码仓库本地克隆目录 |
 | `API_SECRET_KEY` | —（鉴权中间件直接读取） | 空 | API 密钥，为空时 `/api/v1` 鉴权关闭；非空时请求需带请求头 `X-Api-Secret` |
+| `WEBHOOK_SECRET` | —（webhook 处理器直接读取） | 空 | webhook 签名密钥，为空时跳过签名校验（开发环境）；非空时 GitLab/Gitee 回调需携带对应 Token/签名，校验失败返回 403 |
 
 > 说明：
 > - `API_SECRET_KEY` 由 `internal/middleware` 直接读取，不经过 config.yaml。
@@ -160,6 +161,7 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 | ---- | ---- | ---- |
 | GET | `/health` | 健康检查（跳过鉴权），探测 mysql / llm 连通性 |
 | GET | `/` | 首页，302 跳转 `/webstatic/docs.html`（极简前端入口） |
+| POST | `/api/v1/webhook/git_push` | GitLab/Gitee 分支 push 回调，自动触发解析任务（跳过 X-Api-Secret，使用 WEBHOOK_SECRET 签名鉴权） |
 | POST | `/api/v1/task/trigger` | 触发代码解析任务（CI 回调），body: `{task_id, branch}` |
 | GET | `/api/v1/task/status?task_id=xxx` | 查询任务状态 |
 | GET | `/api/v1/task/list?page=1&page_size=20` | 任务列表（分页，时间倒序） |

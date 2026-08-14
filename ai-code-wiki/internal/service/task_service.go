@@ -3,6 +3,8 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +23,7 @@ import (
 	"ai-code-wiki/pkg/logger"
 	"ai-code-wiki/pkg/taskqueue"
 	"ai-code-wiki/pkg/vector"
+	"ai-code-wiki/pkg/webhook"
 
 	"gorm.io/gorm"
 )
@@ -115,6 +118,82 @@ func (s *TaskService) runPipeline(record *model.TaskRecord) {
 	}
 	_ = s.MarkSuccess(record.TaskID)
 	logger.Info(ctx, "任务 %s 执行成功", record.TaskID)
+}
+
+// HandleGitPush 处理代码托管平台 webhook 分支 push 回调。
+//
+// 业务规则：
+//  1. 校验入参（分支/仓库），tag 推送与分支删除在前置 handler 已过滤，这里再兜底；
+//  2. 以「仓库+branch+after commit」生成幂等 task_id：同一次 push 重复回调
+//     （平台重试）直接返回已存在任务，不重复触发；
+//  3. 落库 task_record（待执行）后投递异步任务队列，执行增量解析流水线。
+//
+// 说明：仓库地址以服务配置 git.repo_url 为准（单仓库部署约定）；
+// 回调中的仓库地址用于校验与日志，不一致时仅告警不中断。
+func (s *TaskService) HandleGitPush(ctx context.Context, event *webhook.PushEvent) (*model.TaskRecord, error) {
+	if event == nil || event.IsTag || event.IsDelete {
+		return nil, common.NewError(common.CodeBadRequest, "仅支持分支 push 事件")
+	}
+	if strings.TrimSpace(event.Branch) == "" {
+		return nil, common.NewError(common.CodeBadRequest, "推送分支为空")
+	}
+	if strings.TrimSpace(s.gitCfg.RepoURL) == "" {
+		return nil, common.NewError(common.CodeInvalidState, "git 仓库未配置，无法执行解析任务")
+	}
+
+	// 仓库一致性校验：仅告警，仍按配置仓库解析
+	if event.RepoURL != "" && !sameRepo(s.gitCfg.RepoURL, event.RepoURL) {
+		logger.Warn(ctx, "webhook 仓库 %s 与配置仓库 %s 不一致，仍按配置仓库执行解析", event.RepoURL, s.gitCfg.RepoURL)
+	}
+
+	taskID := genWebhookTaskID(event)
+
+	// 幂等：同一次 push 已触发过则直接返回已存在任务
+	if existing, err := s.taskRepo.GetByTaskID(taskID); err == nil {
+		logger.Info(ctx, "webhook push 已存在任务 %s，跳过重复触发", taskID)
+		return existing, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, common.WrapError(common.CodeInternalError, "查询任务失败", err)
+	}
+
+	record := &model.TaskRecord{
+		TaskID: taskID,
+		Branch: event.Branch,
+		Status: common.TaskStatusPending,
+	}
+	if err := s.taskRepo.Create(record); err != nil {
+		if isDuplicateKeyError(err) { // 并发触发兜底：命中唯一索引，返回已存在任务
+			if existing, e2 := s.taskRepo.GetByTaskID(taskID); e2 == nil {
+				return existing, nil
+			}
+		}
+		return nil, common.WrapError(common.CodeInternalError, "创建任务失败", err)
+	}
+
+	// 投递任务队列，异步执行增量解析流水线，不阻塞 webhook 响应
+	s.queue.SubmitAsyncTask(func() {
+		s.runPipeline(record)
+	})
+	logger.Info(ctx, "webhook 触发解析任务成功 task_id=%s branch=%s", taskID, event.Branch)
+	return record, nil
+}
+
+// genWebhookTaskID 生成幂等任务 id：仓库+branch+after commit 的 sha1 摘要。
+func genWebhookTaskID(event *webhook.PushEvent) string {
+	sum := sha1.Sum([]byte(event.RepoURL + "|" + event.Branch + "|" + event.AfterCommit))
+	return "webhook-" + hex.EncodeToString(sum[:])[:16]
+}
+
+// sameRepo 判断两个仓库地址是否指向同一仓库（忽略 http/https 协议与末尾 .git）。
+func sameRepo(a, b string) bool {
+	norm := func(s string) string {
+		s = strings.TrimRight(strings.TrimSpace(s), "/")
+		s = strings.TrimSuffix(s, ".git")
+		s = strings.TrimPrefix(s, "https://")
+		s = strings.TrimPrefix(s, "http://")
+		return s
+	}
+	return norm(a) == norm(b)
 }
 
 // process 核心流水线：git拉取 -> diff -> 过滤.go -> AST解析 -> LLM生成文档。

@@ -19,6 +19,10 @@ func Register(r *gin.Engine, h *handler.Handler) {
 	// 健康检查（跳过鉴权，不挂载在 /api/v1 分组下；探测 mysql/llm 连通性）
 	r.GET("/health", h.Health)
 
+	// ========== Webhook 回调 ==========
+	// GitLab/Gitee 分支 push 回调，跳过 X-Api-Secret 鉴权，使用 WEBHOOK_SECRET 自有签名鉴权
+	r.POST("/api/v1/webhook/git_push", h.Webhook.GitPush)
+
 	// 兜底：404 / 405 统一 JSON 返回
 	r.NoRoute(middleware.NotFoundHandler)
 	r.NoMethod(middleware.NoMethodHandler)
