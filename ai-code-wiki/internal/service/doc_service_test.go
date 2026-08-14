@@ -130,11 +130,11 @@ func TestDocEdit(t *testing.T) {
 	svc := NewDocService(db, nil, taskqueue.NewMemoryQueue()) // nil 向量客户端：跳过向量同步（外部依赖）
 
 	cases := []struct {
-		name          string // 用例名
-		seedSummary   string // 种子文档摘要
-		req           *EditDocReq
-		wantSummary   string
-		wantProcess   string
+		name        string // 用例名
+		seedSummary string // 种子文档摘要
+		req         *EditDocReq
+		wantSummary string
+		wantProcess string
 	}{
 		{
 			name:        "编辑全部业务字段",
@@ -249,10 +249,10 @@ func TestDocEditError(t *testing.T) {
 	svc := NewDocService(db, nil, taskqueue.NewMemoryQueue())
 
 	seed := &model.CodeFunctionDoc{
-		ModuleName: "test",
-		FilePath:   "test/edit_err.go",
-		FuncName:   "ErrFn",
-		Summary:    "s",
+		ModuleName:    "test",
+		FilePath:      "test/edit_err.go",
+		FuncName:      "ErrFn",
+		Summary:       "s",
 		ContentSource: common.ContentSourceAuto,
 	}
 	docID := seedDoc(t, db, seed)
@@ -283,7 +283,7 @@ func TestDocReset(t *testing.T) {
 	originJSON := `{"summary":"原始摘要","input_desc":"原入参","output_desc":"原出参","process_flow":"原流程","rely_modules":"[\"m\"]","risk_point":"原风险"}`
 
 	cases := []struct {
-		name    string // 用例名
+		name    string                         // 用例名
 		prepare func(d *model.CodeFunctionDoc) // 模拟编辑后的文档状态
 	}{
 		{
@@ -390,8 +390,8 @@ func TestDocResetError(t *testing.T) {
 			wantCode: common.CodeInvalidState,
 		},
 		{
-			name: "文档不存在",
-			seed: nil,
+			name:     "文档不存在",
+			seed:     nil,
 			operator: "bob",
 			wantCode: common.CodeNotFound,
 		},
@@ -409,4 +409,64 @@ func TestDocResetError(t *testing.T) {
 			assertAppErr(t, err, tc.wantCode)
 		})
 	}
+}
+
+// TestDocHistory 验证：编辑/重置会写 doc_modify_log，历史列表与快照详情可查询。
+func TestDocHistory(t *testing.T) {
+	db := newTestDB(t)
+	svc := NewDocService(db, nil, taskqueue.NewMemoryQueue())
+
+	doc := &model.CodeFunctionDoc{
+		ModuleName:    "test",
+		FilePath:      "test/history.go",
+		FuncName:      "HistoryFn",
+		Summary:       "初始摘要",
+		OriginAutoDoc: `{"summary":"重置后摘要"}`,
+	}
+	docID := seedDoc(t, db, doc)
+
+	// 1. 编辑一次（写入 operate_type=1）
+	if err := svc.EditDoc(context.Background(), docID, &EditDocReq{
+		Summary: "编辑后摘要", Operator: "alice", Remark: "第一次编辑",
+	}); err != nil {
+		t.Fatalf("EditDoc 失败: %v", err)
+	}
+	// 2. 重置一次（写入 operate_type=2）
+	if err := svc.ResetDoc(context.Background(), docID, "bob"); err != nil {
+		t.Fatalf("ResetDoc 失败: %v", err)
+	}
+
+	// 3. 历史列表：2 条记录，时间倒序（最近在前）
+	list, err := svc.ListDocHistory(context.Background(), docID)
+	if err != nil {
+		t.Fatalf("ListDocHistory 失败: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("历史记录数量不符: got %d want 2", len(list))
+	}
+	if list[0].OperateType != common.DocOperateReset || list[0].Operator != "bob" {
+		t.Errorf("最近记录应为重置(bob): %+v", list[0])
+	}
+	if list[0].OperateName == "" {
+		t.Errorf("操作类型描述不应为空: %+v", list[0])
+	}
+	if list[1].OperateType != common.DocOperateEdit || list[1].Operator != "alice" {
+		t.Errorf("第一条记录应为编辑(alice): %+v", list[1])
+	}
+
+	// 4. 快照详情：取编辑那条，before/after 应为完整原始 JSON
+	detail, err := svc.GetDocHistoryDetail(context.Background(), docID, list[1].LogID)
+	if err != nil {
+		t.Fatalf("GetDocHistoryDetail 失败: %v", err)
+	}
+	if detail.Before["summary"] != "初始摘要" {
+		t.Errorf("before 快照摘要不符: got %v", detail.Before["summary"])
+	}
+	if detail.After["summary"] != "编辑后摘要" {
+		t.Errorf("after 快照摘要不符: got %v", detail.After["summary"])
+	}
+
+	// 5. 记录不存在 / 不属于该文档 → CodeNotFound
+	_, err = svc.GetDocHistoryDetail(context.Background(), docID, 999999)
+	assertAppErr(t, err, common.CodeNotFound)
 }

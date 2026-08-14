@@ -23,6 +23,16 @@ func (r *DocModifyLogRepo) ListByDocID(docID int64) ([]*model.DocModifyLog, erro
 	return list, err
 }
 
+// GetByLogID 按主键查询单条操作日志。
+// 注意：doc_modify_log 无 is_deleted 列，不能复用 BaseRepo.GetByID（会注入 is_deleted=0 过滤）。
+func (r *DocModifyLogRepo) GetByLogID(id int64) (*model.DocModifyLog, error) {
+	var m model.DocModifyLog
+	if err := r.DB.Where("id = ?", id).First(&m).Error; err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
 // RelationModifyLogRepo 模块依赖关系操作日志仓库。
 type RelationModifyLogRepo struct {
 	*BaseRepo[model.RelationModifyLog]

@@ -56,6 +56,10 @@ func Register(r *gin.Engine, h *handler.Handler) {
 		api.GET("/doc/modified/list", h.Doc.ListModifiedDocs)
 		// 查看文档迭代变更记录
 		api.GET("/doc/changelog", h.Doc.ListChangeLogs)
+		// 查看文档全部修改记录（doc_modify_log 历史版本列表）
+		api.GET("/doc/:doc_id/history", h.Doc.ListDocHistory)
+		// 获取某一条历史快照详情（含修改前后原始 JSON）
+		api.GET("/doc/:doc_id/history/:log_id", h.Doc.GetDocHistoryDetail)
 
 		// ========== 模块依赖知识图谱 ==========
 		// 查询模块上下游依赖

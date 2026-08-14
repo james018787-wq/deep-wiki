@@ -317,6 +317,106 @@ func (s *DocService) ListChangeLogs(ctx context.Context, docID int64) ([]*model.
 	return logs, nil
 }
 
+// ============ 文档历史版本（doc_modify_log 快照） ============
+
+// DocHistoryItem 文档历史修改记录列表项（不含快照正文，避免列表过大）。
+type DocHistoryItem struct {
+	LogID       int64     `json:"log_id"`       // 历史记录 ID
+	OperateType int8      `json:"operate_type"` // 操作类型：1编辑 2重置
+	OperateName string    `json:"operate_name"` // 操作类型中文描述
+	Operator    string    `json:"operator"`     // 操作人
+	OperateTime time.Time `json:"operate_time"` // 修改时间
+	Remark      string    `json:"remark"`       // 备注
+}
+
+// DocHistoryDetail 单条历史快照详情（含修改前后完整原始 JSON）。
+type DocHistoryDetail struct {
+	DocHistoryItem
+	Before map[string]any `json:"before"` // 修改前完整文档快照（原始 JSON）
+	After  map[string]any `json:"after"`  // 修改后完整文档快照（原始 JSON）
+}
+
+// ListDocHistory 查看文档全部修改记录（基于 doc_modify_log，时间倒序）。
+func (s *DocService) ListDocHistory(ctx context.Context, docID int64) ([]*DocHistoryItem, error) {
+	_ = ctx
+	logs, err := s.modifyLog.ListByDocID(docID)
+	if err != nil {
+		return nil, common.WrapError(common.CodeInternalError, "查询文档修改记录失败", err)
+	}
+	list := make([]*DocHistoryItem, 0, len(logs))
+	for _, log := range logs {
+		list = append(list, &DocHistoryItem{
+			LogID:       log.ID,
+			OperateType: log.OperateType,
+			OperateName: operateName(log.OperateType),
+			Operator:    log.Operator,
+			OperateTime: log.OperateTime,
+			Remark:      log.Remark,
+		})
+	}
+	return list, nil
+}
+
+// GetDocHistoryDetail 获取某一条历史快照详情（含修改前后原始 JSON）。
+// 记录不存在或不属于该文档时返回 CodeNotFound。
+func (s *DocService) GetDocHistoryDetail(ctx context.Context, docID, logID int64) (*DocHistoryDetail, error) {
+	_ = ctx
+	log, err := s.modifyLog.GetByLogID(logID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, common.NewError(common.CodeNotFound, "历史记录不存在")
+		}
+		return nil, common.WrapError(common.CodeInternalError, "查询历史记录失败", err)
+	}
+	if log.DocID != docID {
+		return nil, common.NewError(common.CodeNotFound, "历史记录不存在")
+	}
+	before, err := parseSnapshotJSON(log.BeforeContent)
+	if err != nil {
+		return nil, common.WrapError(common.CodeInternalError, "解析修改前快照失败", err)
+	}
+	after, err := parseSnapshotJSON(log.AfterContent)
+	if err != nil {
+		return nil, common.WrapError(common.CodeInternalError, "解析修改后快照失败", err)
+	}
+	return &DocHistoryDetail{
+		DocHistoryItem: DocHistoryItem{
+			LogID:       log.ID,
+			OperateType: log.OperateType,
+			OperateName: operateName(log.OperateType),
+			Operator:    log.Operator,
+			OperateTime: log.OperateTime,
+			Remark:      log.Remark,
+		},
+		Before: before,
+		After:  after,
+	}, nil
+}
+
+// parseSnapshotJSON 解析快照原始 JSON（以 map 形式返回，不丢失字段）。
+func parseSnapshotJSON(content string) (map[string]any, error) {
+	if content == "" {
+		return map[string]any{}, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(content), &m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// operateName 文档操作类型中文描述。
+func operateName(t int8) string {
+	switch t {
+	case common.DocOperateEdit:
+		return "编辑文档"
+	case common.DocOperateReset:
+		return "重置回AI原始版本"
+	default:
+		return "未知操作"
+	}
+}
+
 // ============ 源码变更处理策略 ============
 // 说明：人工校正文档（content_source=2）在自动解析任务中的不覆盖逻辑在
 // TaskService.processFunc 内实现（仅更新 source_code + 置 source_code_changed=1），

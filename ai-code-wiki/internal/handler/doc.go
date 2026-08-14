@@ -174,6 +174,43 @@ func parseDocID(c *gin.Context) (int64, bool) {
 	return id, true
 }
 
+// ListDocHistory 查看文档全部修改记录。
+//
+//	GET /api/v1/doc/:doc_id/history
+func (h *DocHandler) ListDocHistory(c *gin.Context) {
+	docID, ok := parseDocID(c)
+	if !ok {
+		return
+	}
+	list, err := h.svc.Doc.ListDocHistory(c.Request.Context(), docID)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	common.Success(c, list)
+}
+
+// GetDocHistoryDetail 获取某一条历史快照详情。
+//
+//	GET /api/v1/doc/:doc_id/history/:log_id
+func (h *DocHandler) GetDocHistoryDetail(c *gin.Context) {
+	docID, ok := parseDocID(c)
+	if !ok {
+		return
+	}
+	logID := common.Str2Int64(c.Param("log_id"))
+	if logID <= 0 {
+		common.Fail(c, 400, common.CodeBadRequest, "log_id 参数错误")
+		return
+	}
+	detail, err := h.svc.Doc.GetDocHistoryDetail(c.Request.Context(), docID, logID)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	common.Success(c, detail)
+}
+
 // parsePage 解析分页参数。
 func parsePage(c *gin.Context) (int, int) {
 	page := 1

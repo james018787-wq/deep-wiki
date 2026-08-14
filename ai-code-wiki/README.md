@@ -181,6 +181,8 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 | POST | `/api/v1/doc/:doc_id/reset` | 重置为原始 AI 版本 |
 | GET | `/api/v1/doc/modified/list?page=1&page_size=20` | 人工校正文档列表 |
 | GET | `/api/v1/doc/changelog?doc_id=xxx` | 文档迭代变更记录 |
+| GET | `/api/v1/doc/:doc_id/history` | 文档全部修改记录列表（doc_modify_log，含操作人/操作类型/修改时间） |
+| GET | `/api/v1/doc/:doc_id/history/:log_id` | 某一条历史快照详情（含修改前后完整原始 JSON） |
 | GET | `/api/v1/relation/list?module=xxx&direction=out|in` | 模块上下游依赖 |
 | POST | `/api/v1/relation/add` | 人工新增依赖（写操作日志） |
 | DELETE | `/api/v1/relation` | 删除依赖（逻辑删除 + 操作日志） |
@@ -192,7 +194,8 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 `./webstatic` 提供原生 HTML + Vue3 CDN 页面（无构建），由后端 `/webstatic` 静态路由挂载：
 
 - `docs.html` 文档列表（分页 + 模块筛选，点击进入编辑）
-- `doc-edit.html` 文档编辑/详情（加载现有文档，`PUT /api/v1/doc/:doc_id/edit` 提交、支持重置）
+- `doc-edit.html` 文档编辑/详情（加载现有文档，`PUT /api/v1/doc/:doc_id/edit` 提交、支持重置，可进入历史版本页）
+- `doc-history.html` 文档历史版本（`GET /api/v1/doc/:doc_id/history` 列表 + 快照详情，查看修改前后原始 JSON）
 - `tasks.html` 任务管理（任务列表 / 状态查询 / 触发解析任务）
 
 鉴权密钥在 `webstatic/config.js` 的 `apiSecret` 配置（与后端 `API_SECRET_KEY` 一致）。
