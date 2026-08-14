@@ -21,11 +21,10 @@ import (
 
 // 检索与上下文长度控制常量。
 const (
-	TopK            = 10   // 向量初步召回候选数
-	ExpandLimit     = 5    // 每个关联模块扩展召回文档上限
-	PerDocMaxLen    = 300  // 单文档上下文最大字符数（rune）
-	ContextMaxLen   = 6000 // 总上下文最大字符数，避免 LLM 超长报错
-	searchLLMTimeout = 60 * time.Second // 回答生成 LLM 调用超时
+	TopK          = 10   // 向量初步召回候选数
+	ExpandLimit   = 5    // 每个关联模块扩展召回文档上限
+	PerDocMaxLen  = 300  // 单文档上下文最大字符数（rune）
+	ContextMaxLen = 6000 // 总上下文最大字符数，避免 LLM 超长报错
 )
 
 // SearchService 跨模块 RAG 检索服务。
@@ -33,7 +32,8 @@ type SearchService struct {
 	db           *gorm.DB
 	docRepo      *repo.CodeFunctionDocRepo
 	relationRepo *repo.ModuleRelationRepo
-	llmBaseURL   string             // Python LLM 微服务地址（用于 embedding 与回答生成）
+	llmBaseURL   string              // Python LLM 微服务地址（用于 embedding 与回答生成）
+	chatTimeout  time.Duration       // 回答生成 LLM 调用超时（LLM_TIMEOUT，默认 60s）
 	vc           vector.VectorClient // 向量存储抽象（业务不感知 chroma/milvus）
 }
 
@@ -44,6 +44,7 @@ func NewSearchService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient) *
 		docRepo:      newDocRepo(db),
 		relationRepo: repo.NewModuleRelationRepo(db),
 		llmBaseURL:   cfg.LLM.BaseURL,
+		chatTimeout:  llmCallTimeout(cfg.LLM.Timeout, defaultLLMTimeoutSec),
 		vc:           vc,
 	}
 }
@@ -256,7 +257,7 @@ func (s *SearchService) askLLM(ctx context.Context, query, contextPrompt string)
 	if s.llmBaseURL == "" {
 		return "", common.NewError(common.CodeInvalidState, "AI 服务未配置")
 	}
-	ctx, cancel := context.WithTimeout(ctx, searchLLMTimeout)
+	ctx, cancel := context.WithTimeout(ctx, s.chatTimeout)
 	defer cancel()
 
 	system := "你是一名代码知识库问答助手，请根据提供的业务文档上下文，准确、简洁地回答用户问题。" +

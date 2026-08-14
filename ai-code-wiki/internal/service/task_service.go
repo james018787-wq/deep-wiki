@@ -36,6 +36,7 @@ type TaskService struct {
 	docRepo    *repo.CodeFunctionDocRepo
 	gitCfg     *config.GitConfig      // git 仓库配置
 	llmBaseURL string                 // Python LLM 服务地址（LLM_SERVICE_URL）
+	llmTimeout time.Duration          // LLM 生成文档调用超时（LLM_TIMEOUT，默认 60s）
 	vc         vector.VectorClient    // 向量存储抽象（业务不感知 chroma/milvus）
 	queue      taskqueue.TaskQueue    // 异步任务队列（提交入口，消费由独立 Worker 完成）
 	fileFilter *filefilter.FileFilter // 文件过滤规则（跳过测试/依赖/非业务代码）
@@ -50,6 +51,7 @@ func NewTaskService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient, que
 		docRepo:    newDocRepo(db),
 		gitCfg:     &cfg.Git,
 		llmBaseURL: cfg.LLM.BaseURL,
+		llmTimeout: llmCallTimeout(cfg.LLM.Timeout, defaultLLMTimeoutSec),
 		vc:         vc,
 		queue:      queue,
 		fileFilter: filefilter.New(filefilter.Config{
@@ -432,7 +434,7 @@ func (s *TaskService) generateDoc(moduleName, filePath, codeContent string) (*ll
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: s.llmTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("调用LLM服务失败: %w", err)

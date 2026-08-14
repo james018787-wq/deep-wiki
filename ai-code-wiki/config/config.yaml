@@ -17,6 +17,7 @@ mysql:
   conn_max_lifetime: 3600 # 单位秒
 
 # Git 仓库配置（代码解析任务使用）
+# repo_url 为解析仓库地址，部署时可用 GIT_REPO_URL 覆盖
 git:
   repo_url: ""
   clone_dir: ./repo_cache
@@ -55,3 +56,4 @@ llm:
   base_url: ""
   api_key: ""
   model: ""
+  timeout: 60 # LLM 调用超时（秒），LLM_TIMEOUT 覆盖

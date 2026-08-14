@@ -81,6 +81,7 @@ type LLMConfig struct {
 	BaseURL  string `yaml:"base_url"`
 	APIKey   string `yaml:"api_key"`
 	Model    string `yaml:"model"`
+	Timeout  int    `yaml:"timeout"` // LLM 调用超时（秒），默认 60（LLM_TIMEOUT 覆盖）
 }
 
 // Load 从指定路径加载配置文件。
@@ -150,11 +151,14 @@ func (c *Config) ApplyEnv() {
 	c.Filter.IgnoreFileRe = envStr("FILTER_IGNORE_FILE_REGEX", c.Filter.IgnoreFileRe)
 	c.Filter.AllowExts = envStr("FILTER_ALLOW_EXTS", c.Filter.AllowExts)
 
-	// LLM 服务地址（Python 微服务）
+	// LLM 服务地址（Python 微服务）与调用超时
 	c.LLM.BaseURL = envStr("LLM_SERVICE_URL", c.LLM.BaseURL)
+	c.LLM.Timeout = envInt("LLM_TIMEOUT", c.LLM.Timeout)
 
-	// Git 仓库
+	// Git 仓库（repo_url 为解析仓库地址，部署时经 GIT_REPO_URL 注入）
+	c.Git.RepoURL = envStr("GIT_REPO_URL", c.Git.RepoURL)
 	c.Git.CloneDir = envStr("GIT_CLONE_DIR", c.Git.CloneDir)
+	c.Git.DefaultBranch = envStr("GIT_DEFAULT_BRANCH", c.Git.DefaultBranch)
 }
 
 // envStr 读取字符串环境变量，为空时返回默认值。

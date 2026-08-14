@@ -14,20 +14,19 @@ import (
 	"ai-code-wiki/pkg/llm"
 )
 
-// analyzeTimeout 需求分析 LLM 调用超时时间。
-const analyzeTimeout = 30 * time.Second
-
 // RequirementService 新产品需求分析业务逻辑。
 type RequirementService struct {
-	search     *SearchService // 复用已有 RAG 检索流水线
-	llmBaseURL string         // Python LLM 服务地址
+	search      *SearchService // 复用已有 RAG 检索流水线
+	llmBaseURL  string         // Python LLM 服务地址
+	chatTimeout time.Duration  // 需求分析 LLM 调用超时（LLM_TIMEOUT，默认 60s）
 }
 
 // NewRequirementService 构建需求分析服务。
 func NewRequirementService(search *SearchService, cfg *config.Config) *RequirementService {
 	return &RequirementService{
-		search:     search,
-		llmBaseURL: cfg.LLM.BaseURL,
+		search:      search,
+		llmBaseURL:  cfg.LLM.BaseURL,
+		chatTimeout: llmCallTimeout(cfg.LLM.Timeout, defaultLLMTimeoutSec),
 	}
 }
 
@@ -99,7 +98,7 @@ func (s *RequirementService) Analyze(ctx context.Context, req *AnalyzeReq) (*Ana
 	user := buildRequirementUserPrompt(requirement, docs)
 
 	// step4: 调用 LLM，带超时控制
-	ctx, cancel := context.WithTimeout(ctx, analyzeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, s.chatTimeout)
 	defer cancel()
 	raw, err := llm.Chat(ctx, s.llmBaseURL, system, user)
 	if err != nil {

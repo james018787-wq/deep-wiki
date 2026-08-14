@@ -142,6 +142,9 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 | `MILVUS_USER` | vector.user | 空 | Milvus 用户名（可选，服务端开启鉴权时必填） |
 | `MILVUS_PASSWORD` | vector.password | 空 | Milvus 密码（可选） |
 | `LLM_SERVICE_URL` | llm.base_url | http://ai-wiki-llm:9000 | Python LLM 微服务地址 |
+| `LLM_TIMEOUT` | llm.timeout | 60 | LLM 调用超时（秒），用于文档生成 / RAG 问答 / 需求分析 |
+| `GIT_REPO_URL` | git.repo_url | 空 | 解析仓库地址（webhook / 触发任务解析用，生产必须配置） |
+| `GIT_DEFAULT_BRANCH` | git.default_branch | main | 默认分支（增量解析 diff 的基准分支） |
 | `GIT_CLONE_DIR` | git.clone_dir | ./repo_cache | 代码仓库本地克隆目录 |
 | `API_SECRET_KEY` | —（鉴权中间件直接读取） | 空 | API 密钥，为空时 `/api/v1` 鉴权关闭；非空时请求需带请求头 `X-Api-Secret` |
 | `WEBHOOK_SECRET` | —（webhook 处理器直接读取） | 空 | webhook 签名密钥，为空时跳过签名校验（开发环境）；非空时 GitLab/Gitee 回调需携带对应 Token/签名，校验失败返回 403 |

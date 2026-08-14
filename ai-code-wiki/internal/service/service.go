@@ -4,6 +4,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"ai-code-wiki/internal/config"
 	"ai-code-wiki/internal/repo"
@@ -13,6 +14,17 @@ import (
 
 	"gorm.io/gorm"
 )
+
+// defaultLLMTimeoutSec LLM 调用超时默认值（秒），未配置 LLM_TIMEOUT 时使用。
+const defaultLLMTimeoutSec = 60
+
+// llmCallTimeout 将配置的 LLM 超时（秒）转为 duration；未配置/非法时回退默认值。
+func llmCallTimeout(sec, def int) time.Duration {
+	if sec <= 0 {
+		sec = def
+	}
+	return time.Duration(sec) * time.Second
+}
 
 // Service 聚合所有业务服务实例，供 handler 层调用。
 type Service struct {

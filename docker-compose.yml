@@ -55,6 +55,9 @@ services:
         condition: service_healthy
       chroma:
         condition: service_healthy
+      # API 健康检查探测 LLM 服务，需等 LLM 就绪后再启动，避免启动即 unhealthy
+      ai-wiki-llm:
+        condition: service_healthy
     # 健康检查：依赖 MySQL / LLM 服务连通，任一不可用返回 503 判为 unhealthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
@@ -100,5 +103,28 @@ services:
       OPENAI_API_KEY: "your-api-key-here"
       OPENAI_BASE_URL: "https://api.openai.com/v1"
       LLM_MODEL: "gpt-4o"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:9000/health',timeout=3).getcode()==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     volumes:
       - ./ai-wiki-llm/logs:/app/logs
+
+  # 可选：生产环境异步任务队列（TASK_QUEUE_DRIVER=rabbitmq 时启用）
+  # 需在 ai-code-wiki-api 环境变量中配置 RABBITMQ_URL 与 TASK_QUEUE_DRIVER=rabbitmq
+  # rabbitmq:
+  #   image: rabbitmq:3.13-management
+  #   container_name: ai-code-wiki-rabbitmq
+  #   restart: always
+  #   ports:
+  #     - "5672:5672"
+  #     - "15672:15672"
+  #   environment:
+  #     TZ: Asia/Shanghai
+  #   healthcheck:
+  #     test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
