@@ -1,0 +1,24 @@
+# 运行期数据（数据卷 / 克隆缓存），禁止入库
+data/
+repo_cache/
+
+# Go 构建产物
+*.exe
+*.test
+*.out
+ai-code-wiki/bin/
+
+# Python 缓存与虚拟环境（ai-wiki-llm）
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 环境变量与密钥
+.env
+.env.*
+
+# 编辑器 / 系统文件
+.idea/
+.vscode/
+.DS_Store

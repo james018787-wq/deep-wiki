@@ -1,0 +1,101 @@
+-- ai-code-wiki 数据库初始化脚本
+-- MySQL8.0 首次启动时由 docker-entrypoint-initdb.d 自动导入
+-- 字符集 utf8mb4，与 docker-compose 中 mysql 服务配置保持一致
+
+CREATE TABLE IF NOT EXISTS `business_module` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `module_name` varchar(64) NOT NULL COMMENT '业务模块名称',
+  `desc` varchar(512) DEFAULT '' COMMENT '模块说明',
+  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_module_name` (`module_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='业务模块表';
+
+CREATE TABLE IF NOT EXISTS `code_function_doc` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `module_name` varchar(64) NOT NULL COMMENT '所属业务模块',
+  `file_path` varchar(512) NOT NULL COMMENT '源码文件路径',
+  `func_name` varchar(128) NOT NULL COMMENT '函数名称',
+  `source_code` text COMMENT '函数源码片段',
+  `summary` text COMMENT '一句话业务摘要',
+  `input_desc` text COMMENT '入参说明',
+  `output_desc` text COMMENT '返回值说明',
+  `process_flow` text COMMENT '业务执行流程',
+  `rely_modules` text COMMENT '依赖模块json数组',
+  `risk_point` text COMMENT '业务风险点',
+  `origin_auto_doc` text COMMENT '原始AI自动生成文档，永久保存，不可覆盖',
+  `content_source` tinyint NOT NULL DEFAULT 1 COMMENT '1=AI自动生成 2=人工校正',
+  `source_code_changed` tinyint DEFAULT 0 COMMENT '源码已更新，文档待复核标记',
+  `last_edit_user` varchar(64) DEFAULT '' COMMENT '最后操作人',
+  `last_edit_time` datetime DEFAULT NULL COMMENT '人工校正时间',
+  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_file_func` (`file_path`,`func_name`,`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='函数业务文档主表';
+
+CREATE TABLE IF NOT EXISTS `module_relation` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `source_module` varchar(64) NOT NULL COMMENT '源模块',
+  `target_module` varchar(64) NOT NULL COMMENT '被依赖模块',
+  `relation_type` tinyint NOT NULL COMMENT '1同步调用 2异步MQ事件',
+  `source` tinyint NOT NULL DEFAULT 1 COMMENT '1=AST自动识别 2=人工手动添加',
+  `creator` varchar(64) DEFAULT '' COMMENT '创建人',
+  `remark` varchar(512) DEFAULT '' COMMENT '备注说明',
+  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_module_relation` (`source_module`,`target_module`,`relation_type`,`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='模块依赖知识图谱表';
+
+CREATE TABLE IF NOT EXISTS `doc_modify_log` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `doc_id` bigint NOT NULL COMMENT '关联code_function_doc主键',
+  `operate_type` tinyint NOT NULL COMMENT '1编辑文档 2重置回AI原始版本',
+  `before_content` text COMMENT '修改前完整文档JSON',
+  `after_content` text COMMENT '修改后完整文档JSON',
+  `operator` varchar(64) NOT NULL COMMENT '操作人',
+  `operate_time` datetime DEFAULT CURRENT_TIMESTAMP,
+  `remark` varchar(512) DEFAULT '',
+  PRIMARY KEY (`id`),
+  KEY `idx_doc_id` (`doc_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档人工校正日志';
+
+CREATE TABLE IF NOT EXISTS `relation_modify_log` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `source_module` varchar(64) NOT NULL,
+  `target_module` varchar(64) NOT NULL,
+  `operate_type` tinyint NOT NULL COMMENT '1新增 2编辑 3删除',
+  `operator` varchar(64) NOT NULL,
+  `operate_time` datetime DEFAULT CURRENT_TIMESTAMP,
+  `remark` varchar(512) DEFAULT '',
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='模块依赖关系操作日志';
+
+CREATE TABLE IF NOT EXISTS `code_change_log` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `doc_id` bigint NOT NULL COMMENT '关联文档id',
+  `version` varchar(128) DEFAULT '' COMMENT '发布版本',
+  `change_summary` text COMMENT '代码变更摘要',
+  `business_impact` text COMMENT '业务影响范围',
+  `attention` text COMMENT '上线注意事项',
+  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_doc_id` (`doc_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='代码迭代变更历史记录';
+
+CREATE TABLE IF NOT EXISTS `task_record` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `task_id` varchar(64) NOT NULL COMMENT '任务唯一标识',
+  `branch` varchar(128) NOT NULL COMMENT '代码分支',
+  `status` tinyint NOT NULL COMMENT '0待执行 1执行中 2成功 3失败',
+  `err_msg` text COMMENT '错误信息',
+  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+  `finish_time` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_task_id` (`task_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='代码解析任务记录表';

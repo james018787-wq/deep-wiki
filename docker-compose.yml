@@ -1,0 +1,104 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: ai-code-wiki-mysql
+    restart: always
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: "Wiki@2026"
+      MYSQL_DATABASE: ai_code_wiki
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+      - ./init_sql:/docker-entrypoint-initdb.d
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD","mysqladmin","ping","-uroot","-pWiki@2026"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  chroma:
+    image: chromadb/chroma:0.6.3
+    container_name: ai-code-wiki-chroma
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/chroma:/chroma/chroma
+    environment:
+      TZ: Asia/Shanghai
+      ALLOW_RESET: "true"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Go后端服务，本地开发可注释掉，在IDE运行；生产开启
+  ai-code-wiki-api:
+    build:
+      context: ./ai-code-wiki
+      dockerfile: Dockerfile
+    container_name: ai-code-wiki-api
+    restart: always
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+    # 健康检查：依赖 MySQL / LLM 服务连通，任一不可用返回 503 判为 unhealthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      TZ: Asia/Shanghai
+      # 数据库配置
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: "Wiki@2026"
+      DB_NAME: ai_code_wiki
+      # chroma向量库地址
+      CHROMA_URL: http://chroma:8000
+      # Python llm服务地址
+      LLM_SERVICE_URL: http://ai-wiki-llm:9000
+    volumes:
+      - ./repo_cache:/app/repo_cache
+    #开发阶段建议注释，本地IDE运行go；上线打开
+#    deploy:
+#      resources:
+#        limits:
+#          cpus: '2'
+#          memory: 2G
+
+  # Python LLM微服务
+  ai-wiki-llm:
+    build:
+      context: ./ai-wiki-llm
+      dockerfile: Dockerfile
+    container_name: ai-wiki-llm
+    restart: always
+    ports:
+      - "9000:9000"
+    depends_on:
+      chroma:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Shanghai
+      CHROMA_URL: http://chroma:8000
+      OPENAI_API_KEY: "your-api-key-here"
+      OPENAI_BASE_URL: "https://api.openai.com/v1"
+      LLM_MODEL: "gpt-4o"
+    volumes:
+      - ./ai-wiki-llm/logs:/app/logs

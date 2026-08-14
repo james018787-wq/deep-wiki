@@ -1,0 +1,37 @@
+# AI代码知识库系统 基础配置示例
+server:
+  name: ai-code-wiki
+  port: 8080
+  mode: debug # debug / release / test
+
+# MySQL 数据库配置
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  password: root
+  database: ai_code_wiki
+  charset: utf8mb4
+  max_idle_conns: 10
+  max_open_conns: 100
+  conn_max_lifetime: 3600 # 单位秒
+
+# Git 仓库配置（代码解析任务使用）
+git:
+  repo_url: ""
+  clone_dir: ./repo_cache
+  default_branch: main
+
+# 向量库配置
+vector:
+  engine: "" # 向量引擎类型：redis / milvus / faiss 等，后续按需扩展
+  host: ""
+  port: 0
+  collection: code_doc
+
+# AI 大模型配置
+llm:
+  provider: "" # openai / ollama / deepseek 等
+  base_url: ""
+  api_key: ""
+  model: ""
