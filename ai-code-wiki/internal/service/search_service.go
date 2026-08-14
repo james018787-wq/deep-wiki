@@ -30,32 +30,22 @@ const (
 
 // SearchService 跨模块 RAG 检索服务。
 type SearchService struct {
-	db               *gorm.DB
-	docRepo          *repo.CodeFunctionDocRepo
-	relationRepo     *repo.ModuleRelationRepo
-	llmBaseURL       string // Python LLM 微服务地址
-	chromaURL        string // chroma 向量库地址（如 http://chroma:8000）
-	chromaCollection string // chroma 集合名
+	db           *gorm.DB
+	docRepo      *repo.CodeFunctionDocRepo
+	relationRepo *repo.ModuleRelationRepo
+	llmBaseURL   string             // Python LLM 微服务地址（用于 embedding 与回答生成）
+	vc           vector.VectorClient // 向量存储抽象（业务不感知 chroma/milvus）
 }
 
 // NewSearchService 构建检索服务。
-func NewSearchService(db *gorm.DB, cfg *config.Config) *SearchService {
+func NewSearchService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient) *SearchService {
 	return &SearchService{
-		db:               db,
-		docRepo:          newDocRepo(db),
-		relationRepo:     repo.NewModuleRelationRepo(db),
-		llmBaseURL:       cfg.LLM.BaseURL,
-		chromaURL:        buildChromaURL(&cfg.Vector),
-		chromaCollection: cfg.Vector.Collection,
+		db:           db,
+		docRepo:      newDocRepo(db),
+		relationRepo: repo.NewModuleRelationRepo(db),
+		llmBaseURL:   cfg.LLM.BaseURL,
+		vc:           vc,
 	}
-}
-
-// buildChromaURL 由向量配置拼接 chroma 地址。
-func buildChromaURL(cfg *config.VectorConfig) string {
-	if cfg.Host == "" {
-		return ""
-	}
-	return fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port)
 }
 
 // SearchReq 自然语言查询入参。
@@ -82,7 +72,8 @@ type SearchResult struct {
 //
 // 流水线顺序【严格不可调换】：
 //  1. 接收用户 query；
-//  2. 调用 Python LLM 服务向量接口将 query 转为向量，查询 chroma 向量库得到候选 doc_id 列表；
+//  2. 调用 Python LLM 服务向量接口将 query 转为向量，经向量抽象接口
+//    （chroma/milvus 之一）查询得到候选 doc_id 列表；
 //  3. 根据 doc_id 从 MySQL 读取 CodeFunctionDoc 候选文档；
 //  4. 读取 module_relation 表，合并 AST 自动识别 + 人工新增 的模块依赖关系；
 //  5. 根据候选文档所属模块，扩充召回关联模块下文档，实现跨模块召回；
@@ -120,7 +111,7 @@ func (s *SearchService) Search(ctx context.Context, req *SearchReq) (*SearchResu
 }
 
 // RetrieveRelatedDocs 复用检索流水线（步骤2-5）：
-// query转向量 -> 查询chroma得候选doc_id -> MySQL读取候选文档 -> 跨模块扩充召回。
+// query转向量 -> 经向量抽象接口得候选doc_id -> MySQL读取候选文档 -> 跨模块扩充召回。
 //
 // 供需求分析等场景复用检索逻辑（禁止重复实现一套检索）。
 // 无相关文档时返回空切片（不报错），由调用方决定后续处理。
@@ -153,7 +144,7 @@ func (s *SearchService) RetrieveRelatedDocs(ctx context.Context, query string) (
 
 // vectorRecall 向量初步召回（仅做候选 doc_id 检索，不做跨模块扩充）。
 func (s *SearchService) vectorRecall(ctx context.Context, query string) ([]int64, error) {
-	if s.llmBaseURL == "" || s.chromaURL == "" || s.chromaCollection == "" {
+	if s.llmBaseURL == "" || s.vc == nil {
 		return nil, common.NewError(common.CodeInvalidState, "向量检索服务未配置")
 	}
 
@@ -163,8 +154,8 @@ func (s *SearchService) vectorRecall(ctx context.Context, query string) ([]int64
 		return nil, common.WrapError(common.CodeUpstreamError, "向量服务暂时不可用，请稍后重试", err)
 	}
 
-	// 查询 chroma 向量库，得到候选 doc_id 列表
-	ids, err := vector.QuerySimilar(s.chromaURL, s.chromaCollection, vec, TopK)
+	// 通过向量抽象检索候选 doc_id（底层为 chroma 或 milvus，业务无感知）
+	ids, err := s.vc.SearchQuery(vec, TopK)
 	if err != nil {
 		return nil, common.WrapError(common.CodeUpstreamError, "向量检索失败，请稍后重试", err)
 	}

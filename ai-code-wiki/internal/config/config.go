@@ -48,10 +48,13 @@ type GitConfig struct {
 
 // VectorConfig 向量库配置。
 type VectorConfig struct {
-	Engine     string `yaml:"engine"` // redis / milvus / faiss ...
-	Host       string `yaml:"host"`
-	Port       int    `yaml:"port"`
+	Engine     string `yaml:"engine"` // 向量引擎驱动：chroma / milvus（VECTOR_DRIVER 覆盖）
+	Host       string `yaml:"host"`   // chroma: CHROMA_URL 解析；milvus: MILVUS_HOST
+	Port       int    `yaml:"port"`   // milvus: MILVUS_PORT，默认 19530
 	Collection string `yaml:"collection"`
+	Dim        int    `yaml:"dim"`    // embedding 向量维度（Milvus 建集合用，MILVUS_DIM 覆盖）
+	User       string `yaml:"user"`   // Milvus 用户名（可选，开启鉴权时必填，MILVUS_USER）
+	Password   string `yaml:"password"` // Milvus 密码（可选，MILVUS_PASSWORD）
 }
 
 // LLMConfig 大模型配置。
@@ -90,12 +93,32 @@ func (c *Config) ApplyEnv() {
 	c.MySQL.Password = envStr("DB_PASSWORD", c.MySQL.Password)
 	c.MySQL.Database = envStr("DB_NAME", c.MySQL.Database)
 
-	// 向量库（CHROMA_URL 形如 http://chroma:8000）
+	// 向量引擎驱动：VECTOR_DRIVER=chroma/milvus（默认 chroma）
+	if v := envStr("VECTOR_DRIVER", ""); v != "" {
+		c.Vector.Engine = v
+	}
+
+	// 向量库（CHROMA_URL 形如 http://chroma:8000，仅 chroma 引擎使用）
 	if url := envStr("CHROMA_URL", ""); url != "" {
 		host, port := parseURLHostPort(url, 8000)
 		c.Vector.Host = host
 		c.Vector.Port = port
 	}
+
+	// Milvus 连接参数（VECTOR_DRIVER=milvus 时生效）：
+	//   MILVUS_HOST / MILVUS_PORT / MILVUS_COLLECTION / MILVUS_DIM / MILVUS_USER / MILVUS_PASSWORD
+	if v := envStr("MILVUS_HOST", ""); v != "" {
+		c.Vector.Host = v
+	}
+	c.Vector.Port = envInt("MILVUS_PORT", c.Vector.Port)
+	if v := envStr("MILVUS_COLLECTION", ""); v != "" {
+		c.Vector.Collection = v
+	}
+	if v := envInt("MILVUS_DIM", 0); v > 0 {
+		c.Vector.Dim = v
+	}
+	c.Vector.User = envStr("MILVUS_USER", c.Vector.User)
+	c.Vector.Password = envStr("MILVUS_PASSWORD", c.Vector.Password)
 
 	// LLM 服务地址（Python 微服务）
 	c.LLM.BaseURL = envStr("LLM_SERVICE_URL", c.LLM.BaseURL)

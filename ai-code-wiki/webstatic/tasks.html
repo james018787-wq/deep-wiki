@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>任务管理 - ai-code-wiki</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    body { font-family: "Helvetica Neue", Arial, "PingFang SC", sans-serif; margin: 0; background: #f5f6fa; color: #333; }
+    nav { background: #2c3e50; padding: 10px 24px; display: flex; gap: 24px; align-items: center; }
+    nav a { color: #fff; text-decoration: none; font-weight: 600; }
+    nav a.active { color: #42b983; }
+    nav span { color: #8aa; font-size: 13px; margin-left: auto; }
+    .container { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
+    .panel { background: #fff; padding: 18px 20px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.1); margin-bottom: 20px; }
+    .panel h4 { margin: 0 0 12px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .row input { padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; }
+    .row button { padding: 6px 16px; border: none; border-radius: 4px; background: #42b983; color: #fff; cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #eee; padding: 8px 10px; text-align: left; font-size: 13px; }
+    th { background: #f0f2f5; white-space: nowrap; }
+    .status { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+    .pager { margin-top: 16px; display: flex; gap: 12px; align-items: center; }
+    .pager button { padding: 4px 12px; border: 1px solid #ccc; background: #fff; border-radius: 4px; cursor: pointer; }
+    .pager button:disabled { color: #bbb; cursor: not-allowed; }
+    .msg { margin-top: 12px; padding: 8px 12px; border-radius: 4px; font-size: 13px; }
+    .msg.err { background: #fdecea; color: #c62828; }
+    .msg.ok { background: #e8f5e9; color: #2e7d32; }
+    .msg.info { background: #e3f2fd; color: #1565c0; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="docs.html">文档列表</a>
+    <a href="tasks.html" class="active">任务管理</a>
+    <span>ai-code-wiki</span>
+  </nav>
+
+  <div id="app" class="container">
+    <!-- 触发解析任务 -->
+    <div class="panel">
+      <h4>触发解析任务</h4>
+      <div class="row">
+        <input v-model="trigger.task_id" placeholder="task_id（唯一，重复触发会冲突）" style="flex:2;min-width:220px;">
+        <input v-model="trigger.branch" placeholder="branch（如 feature/xxx）" style="flex:1;min-width:160px;">
+        <button :disabled="triggering" @click="doTrigger">触发任务</button>
+      </div>
+      <div class="msg ok" v-if="triggerMsg">{{ triggerMsg }}</div>
+    </div>
+
+    <!-- 查询任务状态 -->
+    <div class="panel">
+      <h4>查询任务状态</h4>
+      <div class="row">
+        <input v-model="statusTaskId" placeholder="输入 task_id 查询状态">
+        <button :disabled="querying" @click="queryStatus">查询</button>
+      </div>
+      <div class="msg info" v-if="statusInfo">{{ statusInfo }}</div>
+    </div>
+
+    <!-- 任务列表 -->
+    <div class="panel">
+      <h4>任务列表</h4>
+      <table>
+        <thead>
+          <tr>
+            <th>task_id</th>
+            <th>分支</th>
+            <th>状态</th>
+            <th>错误信息</th>
+            <th>创建时间</th>
+            <th>完成时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="t in list" :key="t.id">
+            <td>{{ t.task_id }}</td>
+            <td>{{ t.branch }}</td>
+            <td><span class="status" :class="statusClass(t.status)">{{ statusText(t.status) }}</span></td>
+            <td>{{ t.err_msg || '-' }}</td>
+            <td>{{ formatTime(t.create_time) }}</td>
+            <td>{{ formatTime(t.finish_time) }}</td>
+          </tr>
+          <tr v-if="!loading && list.length === 0">
+            <td colspan="6" style="text-align:center;color:#999;">暂无任务</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="pager">
+        <button :disabled="page <= 1" @click="load(page - 1)">上一页</button>
+        <span>第 {{ page }} / {{ totalPages }} 页，共 {{ total }} 条</span>
+        <button :disabled="page >= totalPages" @click="load(page + 1)">下一页</button>
+        <button @click="load(1)">刷新</button>
+      </div>
+    </div>
+
+    <div class="msg err" v-if="error">{{ error }}</div>
+    <div class="msg info" v-if="loading">加载中...</div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="api.js"></script>
+  <script>
+    Vue.createApp({
+      data() {
+        return {
+          trigger: { task_id: '', branch: '' },
+          triggering: false,
+          triggerMsg: '',
+          statusTaskId: '',
+          querying: false,
+          statusInfo: '',
+          list: [],
+          page: 1,
+          pageSize: 20,
+          total: 0,
+          totalPages: 0,
+          loading: false,
+          error: ''
+        };
+      },
+      methods: {
+        async doTrigger() {
+          if (!this.trigger.task_id.trim() || !this.trigger.branch.trim()) { this.error = 'task_id 与 branch 不能为空'; return; }
+          this.triggering = true; this.error = ''; this.triggerMsg = '';
+          try {
+            const data = await apiRequest('/task/trigger', { method: 'POST', body: JSON.stringify(this.trigger) });
+            this.triggerMsg = '触发成功，task_id=' + data.task_id + ' 状态=' + this.statusText(data.status);
+            this.load(1);
+          } catch (e) { this.error = '触发失败: ' + e.message; }
+          finally { this.triggering = false; }
+        },
+        async queryStatus() {
+          const tid = this.statusTaskId.trim();
+          if (!tid) { this.error = '请输入 task_id'; return; }
+          this.querying = true; this.error = ''; this.statusInfo = '';
+          try {
+            const s = await apiRequest('/task/status?task_id=' + encodeURIComponent(tid));
+            this.statusInfo = 'task_id=' + s.task_id + ' 状态=' + this.statusText(s.status) + (s.err_msg ? '，错误：' + s.err_msg : '');
+          } catch (e) { this.error = '查询失败: ' + e.message; }
+          finally { this.querying = false; }
+        },
+        async load(page) {
+          this.page = page;
+          this.loading = true; this.error = '';
+          try {
+            const data = await apiRequest('/task/list?page=' + this.page + '&page_size=' + this.pageSize);
+            this.list = data.list || [];
+            this.total = data.total || 0;
+            this.totalPages = data.page_size ? Math.max(1, Math.ceil(this.total / data.page_size)) : 1;
+          } catch (e) { this.error = '加载任务列表失败: ' + e.message; }
+          finally { this.loading = false; }
+        },
+        statusText(s) {
+          return { 0: '待执行', 1: '执行中', 2: '成功', 3: '失败' }[s] || '未知';
+        },
+        statusClass(s) {
+          return { 0: 'ai', 1: 'ai', 2: 'ok', 3: 'err' }[s] || 'ai';
+        },
+        formatTime(t) {
+          return t ? String(t).replace('T', ' ').slice(0, 19) : '-';
+        }
+      },
+      mounted() {
+        this.load(1);
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>

@@ -27,22 +27,25 @@ import (
 
 // TaskService 代码解析任务业务逻辑。
 type TaskService struct {
-	db          *gorm.DB
-	taskRepo    *repo.TaskRecordRepo
-	docRepo     *repo.CodeFunctionDocRepo
-	gitCfg      *config.GitConfig  // git 仓库配置
-	llmBaseURL  string             // Python LLM 服务地址（LLM_SERVICE_URL）
-	queue       taskqueue.TaskQueue // 异步任务队列（当前默认 goroutine 本地实现，可替换为 MQ）
+	db         *gorm.DB
+	taskRepo   *repo.TaskRecordRepo
+	docRepo    *repo.CodeFunctionDocRepo
+	gitCfg     *config.GitConfig    // git 仓库配置
+	llmBaseURL string               // Python LLM 服务地址（LLM_SERVICE_URL）
+	vc         vector.VectorClient  // 向量存储抽象（业务不感知 chroma/milvus）
+	queue      taskqueue.TaskQueue  // 异步任务队列（当前默认 goroutine 本地实现，可替换为 MQ）
 }
 
 // NewTaskService 构建任务服务。
-func NewTaskService(db *gorm.DB, cfg *config.Config) *TaskService {
+// vc 为 nil 时跳过向量同步（向量引擎未配置/初始化失败场景）。
+func NewTaskService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient) *TaskService {
 	return &TaskService{
 		db:         db,
 		taskRepo:   newTaskRepo(db),
 		docRepo:    newDocRepo(db),
 		gitCfg:     &cfg.Git,
 		llmBaseURL: cfg.LLM.BaseURL,
+		vc:         vc,
 		queue:      taskqueue.Default,
 	}
 }
@@ -367,7 +370,7 @@ func (s *TaskService) generateDoc(moduleName, filePath, codeContent string) (*ll
 // syncVector 同步向量库（best-effort，失败仅记录日志）。
 // 通过异步任务队列执行，避免阻塞主流程。
 func (s *TaskService) syncVector(doc *model.CodeFunctionDoc) {
-	if doc == nil || doc.ID <= 0 || strings.TrimSpace(s.llmBaseURL) == "" {
+	if doc == nil || doc.ID <= 0 || s.vc == nil {
 		return
 	}
 	s.queue.SubmitAsyncTask(func() {
@@ -379,7 +382,7 @@ func (s *TaskService) syncVector(doc *model.CodeFunctionDoc) {
 			FuncName:   doc.FuncName,
 			Content:    content,
 		}
-		if err := vector.UpdateDocEmbedding(s.llmBaseURL, dv); err != nil {
+		if err := s.vc.UpsertDoc(dv); err != nil {
 			logger.Warn(context.Background(), "同步向量失败 doc_id=%d err=%v", doc.ID, err)
 		}
 	})

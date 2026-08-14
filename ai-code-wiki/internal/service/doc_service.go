@@ -20,26 +20,26 @@ import (
 
 // DocService 业务文档相关逻辑：检索、详情、人工校正、重置、迭代记录。
 type DocService struct {
-	db            *gorm.DB
-	docRepo       *repo.CodeFunctionDocRepo
-	modifyLog     *repo.DocModifyLogRepo
-	changeLog     *repo.CodeChangeLogRepo
-	moduleRepo    *repo.BusinessModuleRepo
-	vectorBaseURL string            // 向量化服务（Python LLM 微服务）基础地址，用于异步同步向量
-	queue         taskqueue.TaskQueue // 异步任务队列（当前默认 goroutine 本地实现，可替换为 MQ）
+	db         *gorm.DB
+	docRepo    *repo.CodeFunctionDocRepo
+	modifyLog  *repo.DocModifyLogRepo
+	changeLog  *repo.CodeChangeLogRepo
+	moduleRepo *repo.BusinessModuleRepo
+	vc         vector.VectorClient   // 向量存储抽象（业务不感知 chroma/milvus）
+	queue      taskqueue.TaskQueue   // 异步任务队列（当前默认 goroutine 本地实现，可替换为 MQ）
 }
 
 // NewDocService 构建文档服务。
-// vectorBaseURL 为空时跳过向量同步（本地未部署 LLM 服务场景）。
-func NewDocService(db *gorm.DB, vectorBaseURL string) *DocService {
+// vc 为 nil 时跳过向量同步（向量引擎未配置/初始化失败场景）。
+func NewDocService(db *gorm.DB, vc vector.VectorClient) *DocService {
 	return &DocService{
-		db:            db,
-		docRepo:       newDocRepo(db),
-		modifyLog:     repo.NewDocModifyLogRepo(db),
-		changeLog:     repo.NewCodeChangeLogRepo(db),
-		moduleRepo:    repo.NewBusinessModuleRepo(db),
-		vectorBaseURL: vectorBaseURL,
-		queue:         taskqueue.Default,
+		db:         db,
+		docRepo:    newDocRepo(db),
+		modifyLog:  repo.NewDocModifyLogRepo(db),
+		changeLog:  repo.NewCodeChangeLogRepo(db),
+		moduleRepo: repo.NewBusinessModuleRepo(db),
+		vc:         vc,
+		queue:      taskqueue.Default,
 	}
 }
 
@@ -51,6 +51,16 @@ func (s *DocService) ListModules(ctx context.Context) ([]*model.BusinessModule, 
 		return nil, common.WrapError(common.CodeInternalError, "查询业务模块失败", err)
 	}
 	return modules, nil
+}
+
+// ListDocs 分页查询函数文档列表，可按模块筛选（前端文档列表页使用）。
+func (s *DocService) ListDocs(ctx context.Context, module string, page, pageSize int) (*common.PageResult, error) {
+	_ = ctx
+	list, total, err := s.docRepo.ListByModule(strings.TrimSpace(module), page, pageSize)
+	if err != nil {
+		return nil, common.WrapError(common.CodeInternalError, "查询文档列表失败", err)
+	}
+	return &common.PageResult{List: list, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
 // GetDoc 获取文档详情。
@@ -86,7 +96,7 @@ type EditDocReq struct {
 //  3. 更新 CodeFunctionDoc 字段，content_source 置为 2（人工校正），
 //     记录操作人 last_edit_user 与操作时间 last_edit_time。
 //  4. origin_auto_doc 永久保留首次 AI 生成内容，禁止覆盖。
-//  5. 事务提交之后【异步调用 pkg/vector.UpdateDocEmbedding】同步向量库，
+//  5. 事务提交之后【异步调用向量抽象 VectorClient.UpsertDoc】同步向量库，
 //     保证向量检索使用最新校正内容。
 //
 // 校验：文档不存在返回业务错误。
@@ -160,7 +170,7 @@ func (s *DocService) EditDoc(ctx context.Context, docID int64, req *EditDocReq) 
 //  2. 使用 origin_auto_doc 恢复原始 AI 生成内容，origin_auto_doc 禁止被覆盖。
 //  3. content_source 恢复为 1（AI自动生成）。
 //  4. 写入重置类型操作日志（operate_type=2）。
-//  5. 事务提交之后【异步调用 pkg/vector.UpdateDocEmbedding】同步向量库。
+//  5. 事务提交之后【异步调用向量抽象 VectorClient.UpsertDoc】同步向量库。
 //
 // 校验：文档不存在、origin_auto_doc 为空均返回业务错误。
 func (s *DocService) ResetDoc(ctx context.Context, docID int64, operator string) error {
@@ -274,7 +284,7 @@ func restoreFromOriginDoc(doc *model.CodeFunctionDoc) error {
 // 最小切片单元=单个函数，失败仅记录日志，不阻塞主流程。
 // 通过异步任务队列执行，避免直接 goroutine。
 func (s *DocService) syncVectorAsync(doc *model.CodeFunctionDoc) {
-	if doc == nil || s.vectorBaseURL == "" {
+	if doc == nil || s.vc == nil {
 		return
 	}
 	s.queue.SubmitAsyncTask(func() {
@@ -290,7 +300,7 @@ func (s *DocService) syncVectorAsync(doc *model.CodeFunctionDoc) {
 			FuncName:   doc.FuncName,
 			Content:    content,
 		}
-		if err := vector.UpdateDocEmbedding(s.vectorBaseURL, dv); err != nil {
+		if err := s.vc.UpsertDoc(dv); err != nil {
 			logger.Warn(context.Background(), "同步向量库失败 doc_id=%d err=%v", doc.ID, err)
 		}
 	})

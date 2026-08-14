@@ -23,11 +23,15 @@ git:
   default_branch: main
 
 # 向量库配置
+# 引擎驱动由 VECTOR_DRIVER 环境变量选择：chroma / milvus（默认 chroma）
 vector:
-  engine: "" # 向量引擎类型：redis / milvus / faiss 等，后续按需扩展
-  host: ""
-  port: 0
+  engine: "" # 向量引擎驱动：chroma / milvus（可由 VECTOR_DRIVER 环境变量覆盖）
+  host: ""   # chroma: CHROMA_URL 解析出 host；milvus: MILVUS_HOST
+  port: 0    # milvus: MILVUS_PORT，默认 19530
   collection: code_doc
+  dim: 1536  # embedding 向量维度（milvus 建集合用，需与向量化服务输出一致；可由 MILVUS_DIM 覆盖）
+  user: ""   # milvus 用户名（可选，开启鉴权时必填；MILVUS_USER）
+  password: "" # milvus 密码（可选；MILVUS_PASSWORD）
 
 # AI 大模型配置
 llm:

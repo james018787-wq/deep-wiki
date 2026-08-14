@@ -63,6 +63,19 @@ func (h *DocHandler) ListModules(c *gin.Context) {
 	common.Success(c, modules)
 }
 
+// List 分页查询函数文档列表，支持按模块筛选（前端文档列表页使用）。
+//
+//	GET /api/v1/doc/list?module=xxx&page=1&page_size=20
+func (h *DocHandler) List(c *gin.Context) {
+	page, pageSize := parsePage(c)
+	result, err := h.svc.Doc.ListDocs(c.Request.Context(), c.Query("module"), page, pageSize)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	common.Success(c, result)
+}
+
 // GetDoc 获取文档详情。
 //
 //	GET /api/v1/doc/:doc_id

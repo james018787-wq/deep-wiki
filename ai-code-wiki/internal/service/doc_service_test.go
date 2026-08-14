@@ -9,7 +9,7 @@ package service
 //         docker compose up -d mysql
 //         go test ./internal/service/ -run 'TestDoc(Edit|Reset)' -v
 //     向量库 / LLM 服务不在本测试范围内：
-//     NewDocService 传入空 vectorBaseURL，跳过异步向量同步（外部依赖）。
+//     NewDocService 传入 nil 向量客户端，跳过异步向量同步（外部依赖）。
 
 import (
 	"context"
@@ -126,7 +126,7 @@ func TestRestoreFromOriginDoc(t *testing.T) {
 // TestDocEdit 表格驱动：人工校正事务正常落库 + 操作日志生成。
 func TestDocEdit(t *testing.T) {
 	db := newTestDB(t)
-	svc := NewDocService(db, "") // vectorBaseURL 为空：跳过向量同步（外部依赖）
+	svc := NewDocService(db, nil) // nil 向量客户端：跳过向量同步（外部依赖）
 
 	cases := []struct {
 		name          string // 用例名
@@ -245,7 +245,7 @@ func TestDocEdit(t *testing.T) {
 // TestDocEditError 表格驱动：编辑的异常分支。
 func TestDocEditError(t *testing.T) {
 	db := newTestDB(t)
-	svc := NewDocService(db, "")
+	svc := NewDocService(db, nil)
 
 	seed := &model.CodeFunctionDoc{
 		ModuleName: "test",
@@ -277,7 +277,7 @@ func TestDocEditError(t *testing.T) {
 // TestDocReset 表格驱动：文档重置恢复原始 AI 内容，origin_auto_doc 不被覆盖。
 func TestDocReset(t *testing.T) {
 	db := newTestDB(t)
-	svc := NewDocService(db, "")
+	svc := NewDocService(db, nil)
 
 	originJSON := `{"summary":"原始摘要","input_desc":"原入参","output_desc":"原出参","process_flow":"原流程","rely_modules":"[\"m\"]","risk_point":"原风险"}`
 
@@ -362,7 +362,7 @@ func TestDocReset(t *testing.T) {
 // TestDocResetError 表格驱动：重置的异常分支。
 func TestDocResetError(t *testing.T) {
 	db := newTestDB(t)
-	svc := NewDocService(db, "")
+	svc := NewDocService(db, nil)
 
 	cases := []struct {
 		name     string // 用例名

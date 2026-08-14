@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档编辑 - ai-code-wiki</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    body { font-family: "Helvetica Neue", Arial, "PingFang SC", sans-serif; margin: 0; background: #f5f6fa; color: #333; }
+    nav { background: #2c3e50; padding: 10px 24px; display: flex; gap: 24px; align-items: center; }
+    nav a { color: #fff; text-decoration: none; font-weight: 600; }
+    nav span { color: #8aa; font-size: 13px; margin-left: auto; }
+    .container { max-width: 900px; margin: 20px auto; padding: 0 16px; }
+    .panel { background: #fff; padding: 20px 24px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+    .meta { font-size: 13px; color: #666; margin-bottom: 16px; line-height: 1.9; }
+    .meta b { color: #333; }
+    .form-item { margin-bottom: 14px; }
+    .form-item label { display: block; margin-bottom: 4px; font-size: 13px; color: #555; }
+    .form-item input, .form-item textarea { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; font-family: inherit; }
+    .form-item textarea { min-height: 70px; resize: vertical; }
+    .actions { display: flex; gap: 12px; margin-top: 8px; }
+    .actions button { padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; border: none; }
+    .btn-save { background: #42b983; color: #fff; }
+    .btn-reset { background: #f0f2f5; color: #333; border: 1px solid #ccc !important; }
+    .btn-back { background: transparent; color: #2c3e50; border: 1px solid #ccc !important; }
+    .msg { margin-top: 12px; padding: 8px 12px; border-radius: 4px; font-size: 13px; }
+    .msg.err { background: #fdecea; color: #c62828; }
+    .msg.ok { background: #e8f5e9; color: #2e7d32; }
+    details { margin-top: 16px; font-size: 12px; color: #777; }
+    details pre { background: #fafafa; padding: 10px; border: 1px solid #eee; border-radius: 4px; white-space: pre-wrap; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="docs.html">文档列表</a>
+    <a href="tasks.html">任务管理</a>
+    <span>ai-code-wiki</span>
+  </nav>
+
+  <div id="app" class="container">
+    <div class="panel">
+      <h3 style="margin-top:0;">文档编辑 / 详情</h3>
+
+      <div class="meta">
+        <div><b>ID:</b> {{ doc.id }} <b>模块:</b> {{ doc.module_name }} <b>函数:</b> {{ doc.func_name }}</div>
+        <div><b>文件:</b> {{ doc.file_path }}</div>
+        <div><b>来源:</b> {{ doc.content_source === 2 ? '人工校正' : 'AI自动生成' }}
+             <b>待复核:</b> {{ doc.source_code_changed === 1 ? '是' : '否' }}
+             <b>最近操作人:</b> {{ doc.last_edit_user || '-' }}</div>
+      </div>
+
+      <div class="form-item">
+        <label>业务摘要 summary</label>
+        <input v-model="form.summary" placeholder="一句话业务摘要">
+      </div>
+      <div class="form-item">
+        <label>入参说明 input_desc</label>
+        <textarea v-model="form.input_desc"></textarea>
+      </div>
+      <div class="form-item">
+        <label>返回值说明 output_desc</label>
+        <textarea v-model="form.output_desc"></textarea>
+      </div>
+      <div class="form-item">
+        <label>业务执行流程 process_flow</label>
+        <textarea v-model="form.process_flow"></textarea>
+      </div>
+      <div class="form-item">
+        <label>业务风险点 risk_point</label>
+        <textarea v-model="form.risk_point"></textarea>
+      </div>
+      <div class="form-item">
+        <label>操作人 operator（必填）</label>
+        <input v-model="form.operator" placeholder="例如 tester">
+      </div>
+      <div class="form-item">
+        <label>备注 remark</label>
+        <input v-model="form.remark" placeholder="本次修改说明">
+      </div>
+
+      <div class="actions">
+        <button class="btn-save" :disabled="saving" @click="save">保存校正</button>
+        <button class="btn-reset" :disabled="saving" @click="reset">重置为原始AI版本</button>
+        <button class="btn-back" @click="location.href = 'docs.html'">返回列表</button>
+      </div>
+
+      <div class="msg err" v-if="error">{{ error }}</div>
+      <div class="msg ok" v-if="okMsg">{{ okMsg }}</div>
+
+      <details v-if="doc.origin_auto_doc">
+        <summary>查看原始 AI 自动生成文档（origin_auto_doc，只读）</summary>
+        <pre>{{ doc.origin_auto_doc }}</pre>
+      </details>
+    </div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="api.js"></script>
+  <script>
+    Vue.createApp({
+      data() {
+        return {
+          docId: 0,
+          doc: {},
+          form: { summary: '', input_desc: '', output_desc: '', process_flow: '', risk_point: '', operator: '', remark: '' },
+          saving: false,
+          error: '',
+          okMsg: ''
+        };
+      },
+      methods: {
+        docPath() {
+          return '/doc/' + this.docId;
+        },
+        async load() {
+          this.error = '';
+          try {
+            this.doc = await apiRequest(this.docPath());
+            this.form.summary = this.doc.summary || '';
+            this.form.input_desc = this.doc.input_desc || '';
+            this.form.output_desc = this.doc.output_desc || '';
+            this.form.process_flow = this.doc.process_flow || '';
+            this.form.risk_point = this.doc.risk_point || '';
+          } catch (e) {
+            this.error = '加载文档失败: ' + e.message;
+          }
+        },
+        async save() {
+          if (!this.form.operator.trim()) { this.error = '操作人不能为空'; return; }
+          this.saving = true; this.error = ''; this.okMsg = '';
+          try {
+            await apiRequest(this.docPath() + '/edit', {
+              method: 'PUT',
+              body: JSON.stringify(this.form)
+            });
+            this.okMsg = '保存成功，已写入操作日志并同步向量库';
+            this.load();
+          } catch (e) { this.error = '保存失败: ' + e.message; }
+          finally { this.saving = false; }
+        },
+        async reset() {
+          if (!this.form.operator.trim()) { this.error = '操作人不能为空'; return; }
+          if (!confirm('确认重置为原始 AI 自动生成版本？')) return;
+          this.saving = true; this.error = ''; this.okMsg = '';
+          try {
+            await apiRequest(this.docPath() + '/reset', {
+              method: 'POST',
+              body: JSON.stringify({ operator: this.form.operator })
+            });
+            this.okMsg = '已重置为原始 AI 版本';
+            this.load();
+          } catch (e) { this.error = '重置失败: ' + e.message; }
+          finally { this.saving = false; }
+        }
+      },
+      mounted() {
+        this.docId = parseInt(new URLSearchParams(location.search).get('doc_id') || '0', 10);
+        if (!this.docId) {
+          this.error = '缺少 doc_id 参数';
+          return;
+        }
+        this.load();
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>

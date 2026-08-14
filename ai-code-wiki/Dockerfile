@@ -24,6 +24,8 @@ WORKDIR /app
 # 拷贝二进制与配置文件
 COPY --from=builder /app/ai-code-wiki .
 COPY --from=builder /app/config/config.yaml ./config/config.yaml
+# 极简前端静态页面（Vue3 CDN，无构建），由 gin /webstatic 挂载
+COPY --from=builder /app/webstatic ./webstatic
 
 # 配置读取支持环境变量覆盖（DB_HOST/DB_PORT 等），默认走 config.yaml
 EXPOSE 8080

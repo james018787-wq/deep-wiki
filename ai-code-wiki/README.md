@@ -133,7 +133,14 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 | `DB_USER` | mysql.user | root | MySQL 用户 |
 | `DB_PASSWORD` | mysql.password | root | MySQL 密码 |
 | `DB_NAME` | mysql.database | ai_code_wiki | 数据库名 |
-| `CHROMA_URL` | vector.host/port | http://chroma:8000 | Chroma 向量库地址（解析为 host+port） |
+| `CHROMA_URL` | vector.host/port | http://chroma:8000 | Chroma 向量库地址（解析为 host+port，`VECTOR_DRIVER=chroma` 时生效） |
+| `VECTOR_DRIVER` | vector.engine | chroma | 向量引擎驱动：`chroma` / `milvus`，业务代码经抽象接口不感知底层引擎 |
+| `MILVUS_HOST` | vector.host | 空 | Milvus 服务地址（如 `127.0.0.1` 或 docker-compose 服务名 `milvus`） |
+| `MILVUS_PORT` | vector.port | 19530 | Milvus 端口 |
+| `MILVUS_COLLECTION` | vector.collection | code_doc | Milvus 集合名 |
+| `MILVUS_DIM` | vector.dim | 1536 | embedding 向量维度，需与向量化服务输出一致（如 OpenAI text-embedding-3-small 为 1536） |
+| `MILVUS_USER` | vector.user | 空 | Milvus 用户名（可选，服务端开启鉴权时必填） |
+| `MILVUS_PASSWORD` | vector.password | 空 | Milvus 密码（可选） |
 | `LLM_SERVICE_URL` | llm.base_url | http://ai-wiki-llm:9000 | Python LLM 微服务地址 |
 | `GIT_CLONE_DIR` | git.clone_dir | ./repo_cache | 代码仓库本地克隆目录 |
 | `API_SECRET_KEY` | —（鉴权中间件直接读取） | 空 | API 密钥，为空时 `/api/v1` 鉴权关闭；非空时请求需带请求头 `X-Api-Secret` |
@@ -141,7 +148,8 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 > 说明：
 > - `API_SECRET_KEY` 由 `internal/middleware` 直接读取，不经过 config.yaml。
 > - Docker Compose 中 Go 服务已注入 `DB_*`、`CHROMA_URL`、`LLM_SERVICE_URL`，生产部署请补充 `API_SECRET_KEY`。
-> - `vector.engine`（redis/milvus/faiss）与 `llm.provider/api_key/model` 为预留配置，当前版本未启用。
+> - `llm.provider/api_key/model` 为预留配置，当前版本未启用。
+> - 向量引擎选择：默认 `chroma`；切换 Milvus 时设置 `VECTOR_DRIVER=milvus` 并配置 `MILVUS_*`，集合不存在会自动创建（FLAT 索引 + L2 距离）。初始化失败时向量同步/检索降级（跳过或返回"未配置"），不影响服务启动。
 
 ## 4. API 简要说明
 
@@ -151,11 +159,13 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 | 方法 | 路径 | 说明 |
 | ---- | ---- | ---- |
 | GET | `/health` | 健康检查（跳过鉴权），探测 mysql / llm 连通性 |
+| GET | `/` | 首页，302 跳转 `/webstatic/docs.html`（极简前端入口） |
 | POST | `/api/v1/task/trigger` | 触发代码解析任务（CI 回调），body: `{task_id, branch}` |
 | GET | `/api/v1/task/status?task_id=xxx` | 查询任务状态 |
 | GET | `/api/v1/task/list?page=1&page_size=20` | 任务列表（分页，时间倒序） |
 | POST | `/api/v1/doc/search` | 自然语言跨模块检索，body: `{query, module?}` |
 | GET | `/api/v1/doc/module/list` | 获取所有业务模块 |
+| GET | `/api/v1/doc/list?module=xxx&page=1&page_size=20` | 分页查询函数文档列表（前端列表页使用） |
 | GET | `/api/v1/doc/:doc_id` | 获取文档详情 |
 | PUT | `/api/v1/doc/:doc_id/edit` | 人工校正文档（记录修改前后快照） |
 | POST | `/api/v1/doc/:doc_id/reset` | 重置为原始 AI 版本 |
@@ -165,6 +175,16 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 | POST | `/api/v1/relation/add` | 人工新增依赖（写操作日志） |
 | DELETE | `/api/v1/relation` | 删除依赖（逻辑删除 + 操作日志） |
 | POST | `/api/v1/requirement/analyze` | 需求分析，body: `{user_requirement}` |
+
+### 4.2 极简前端
+
+`./webstatic` 提供原生 HTML + Vue3 CDN 页面（无构建），由后端 `/webstatic` 静态路由挂载：
+
+- `docs.html` 文档列表（分页 + 模块筛选，点击进入编辑）
+- `doc-edit.html` 文档编辑/详情（加载现有文档，`PUT /api/v1/doc/:doc_id/edit` 提交、支持重置）
+- `tasks.html` 任务管理（任务列表 / 状态查询 / 触发解析任务）
+
+鉴权密钥在 `webstatic/config.js` 的 `apiSecret` 配置（与后端 `API_SECRET_KEY` 一致）。
 
 ### 4.1 典型调用示例
 

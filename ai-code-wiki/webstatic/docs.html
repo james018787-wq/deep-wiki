@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档列表 - ai-code-wiki</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    body { font-family: "Helvetica Neue", Arial, "PingFang SC", sans-serif; margin: 0; background: #f5f6fa; color: #333; }
+    nav { background: #2c3e50; padding: 10px 24px; display: flex; gap: 24px; align-items: center; }
+    nav a { color: #fff; text-decoration: none; font-weight: 600; }
+    nav a.active { color: #42b983; }
+    nav span { color: #8aa; font-size: 13px; margin-left: auto; }
+    .container { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
+    .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+    .toolbar select, .toolbar button { padding: 6px 12px; border-radius: 4px; border: 1px solid #ccc; }
+    .toolbar button { background: #42b983; color: #fff; border: none; cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+    th, td { border: 1px solid #eee; padding: 8px 10px; text-align: left; font-size: 13px; }
+    th { background: #f0f2f5; white-space: nowrap; }
+    tr.doc-row { cursor: pointer; }
+    tr.doc-row:hover { background: #eefaf4; }
+    .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+    .tag.ai { background: #e3f2fd; color: #1565c0; }
+    .tag.manual { background: #fff3e0; color: #e65100; }
+    .pager { margin-top: 16px; display: flex; gap: 12px; align-items: center; }
+    .pager button { padding: 4px 12px; border: 1px solid #ccc; background: #fff; border-radius: 4px; cursor: pointer; }
+    .pager button:disabled { color: #bbb; cursor: not-allowed; }
+    .msg { margin-top: 12px; padding: 8px 12px; border-radius: 4px; font-size: 13px; }
+    .msg.err { background: #fdecea; color: #c62828; }
+    .msg.info { background: #e3f2fd; color: #1565c0; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="docs.html" class="active">文档列表</a>
+    <a href="tasks.html">任务管理</a>
+    <span>ai-code-wiki</span>
+  </nav>
+
+  <div id="app" class="container">
+    <div class="toolbar">
+      <label>模块筛选：</label>
+      <select v-model="module" @change="load(1)">
+        <option value="">全部模块</option>
+        <option v-for="m in modules" :key="m.id" :value="m.module_name">{{ m.module_name }}</option>
+      </select>
+      <button @click="load(1)">刷新</button>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>模块</th>
+          <th>函数</th>
+          <th>文件路径</th>
+          <th>摘要</th>
+          <th>来源</th>
+          <th>更新时间</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="d in list" :key="d.id" class="doc-row" @click="goDetail(d.id)">
+          <td>{{ d.id }}</td>
+          <td>{{ d.module_name }}</td>
+          <td>{{ d.func_name }}</td>
+          <td>{{ d.file_path }}</td>
+          <td>{{ d.summary }}</td>
+          <td><span class="tag" :class="d.content_source === 2 ? 'manual' : 'ai'">{{ d.content_source === 2 ? '人工校正' : 'AI生成' }}</span></td>
+          <td>{{ formatTime(d.update_time) }}</td>
+        </tr>
+        <tr v-if="!loading && list.length === 0">
+          <td colspan="7" style="text-align:center;color:#999;">暂无文档</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="pager">
+      <button :disabled="page <= 1" @click="load(page - 1)">上一页</button>
+      <span>第 {{ page }} / {{ totalPages }} 页，共 {{ total }} 条</span>
+      <button :disabled="page >= totalPages" @click="load(page + 1)">下一页</button>
+    </div>
+
+    <div class="msg err" v-if="error">{{ error }}</div>
+    <div class="msg info" v-if="loading">加载中...</div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="api.js"></script>
+  <script>
+    Vue.createApp({
+      data() {
+        return {
+          modules: [],
+          module: '',
+          list: [],
+          page: 1,
+          pageSize: 20,
+          total: 0,
+          totalPages: 0,
+          loading: false,
+          error: ''
+        };
+      },
+      methods: {
+        async loadModules() {
+          try {
+            this.modules = await apiRequest('/doc/module/list');
+          } catch (e) { this.error = '加载模块失败: ' + e.message; }
+        },
+        async load(page) {
+          this.page = page;
+          this.loading = true;
+          this.error = '';
+          try {
+            const params = new URLSearchParams({ page: this.page, page_size: this.pageSize });
+            if (this.module) params.set('module', this.module);
+            const data = await apiRequest('/doc/list?' + params.toString());
+            this.list = data.list || [];
+            this.total = data.total || 0;
+            this.totalPages = data.page_size ? Math.max(1, Math.ceil(this.total / data.page_size)) : 1;
+          } catch (e) { this.error = '加载文档失败: ' + e.message; }
+          finally { this.loading = false; }
+        },
+        goDetail(id) {
+          location.href = 'doc-edit.html?doc_id=' + id;
+        },
+        formatTime(t) {
+          return t ? String(t).replace('T', ' ').slice(0, 19) : '-';
+        }
+      },
+      mounted() {
+        this.loadModules();
+        this.load(1);
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>

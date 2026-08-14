@@ -2,6 +2,8 @@
 package router
 
 import (
+	"net/http"
+
 	"ai-code-wiki/internal/handler"
 	"ai-code-wiki/internal/middleware"
 
@@ -38,6 +40,8 @@ func Register(r *gin.Engine, h *handler.Handler) {
 		api.POST("/doc/search", h.Doc.Search)
 		// 获取所有业务模块
 		api.GET("/doc/module/list", h.Doc.ListModules)
+		// 分页查询函数文档列表（前端列表页使用，支持模块筛选）
+		api.GET("/doc/list", h.Doc.List)
 		// 获取文档详情
 		api.GET("/doc/:doc_id", h.Doc.GetDoc)
 		// 人工校正业务文档
@@ -61,4 +65,12 @@ func Register(r *gin.Engine, h *handler.Handler) {
 		// 新产品需求分析
 		api.POST("/requirement/analyze", h.Requirement.Analyze)
 	}
+
+	// ========== 极简前端静态页面（原生 HTML + Vue3 CDN，无构建） ==========
+	// 挂载 ./webstatic 目录，不经过 /api/v1 鉴权分组
+	r.Static("/webstatic", "./webstatic")
+	// 首页默认跳转文档列表页
+	r.GET("/", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "/webstatic/docs.html")
+	})
 }

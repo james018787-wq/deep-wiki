@@ -2,8 +2,13 @@
 package service
 
 import (
+	"context"
+	"fmt"
+
 	"ai-code-wiki/internal/config"
 	"ai-code-wiki/internal/repo"
+	"ai-code-wiki/pkg/logger"
+	"ai-code-wiki/pkg/vector"
 
 	"gorm.io/gorm"
 )
@@ -23,19 +28,46 @@ type Service struct {
 
 // NewService 构建业务服务聚合对象，注入依赖。
 // cfg 提供向量化服务（Python LLM 微服务）地址等外部依赖配置。
+// 向量引擎按 VECTOR_DRIVER 选择（chroma/milvus），构建失败时降级为 nil
+//（向量同步跳过、向量检索返回"未配置"），不阻塞服务启动。
 func NewService(db *gorm.DB, cfg *config.Config) *Service {
+	// 构建向量存储抽象（业务代码只依赖 VectorClient 接口，不感知底层引擎）
+	vc, err := vector.NewVectorClient(vector.Options{
+		Driver:         cfg.Vector.Engine,
+		ChromaURL:      chromaURLFromConfig(&cfg.Vector),
+		Collection:     cfg.Vector.Collection,
+		EmbedBaseURL:   cfg.LLM.BaseURL,
+		MilvusHost:     cfg.Vector.Host,
+		MilvusPort:     cfg.Vector.Port,
+		MilvusDim:      cfg.Vector.Dim,
+		MilvusUser:     cfg.Vector.User,
+		MilvusPassword: cfg.Vector.Password,
+	})
+	if err != nil {
+		logger.Warn(context.Background(), "向量引擎初始化失败，向量同步/检索降级跳过: %v", err)
+		vc = nil
+	}
+
 	// 需求分析服务依赖检索服务，先构建检索服务
-	searchSvc := NewSearchService(db, cfg)
+	searchSvc := NewSearchService(db, cfg, vc)
 	return &Service{
 		db:          db,
 		llmBaseURL:  cfg.LLM.BaseURL,
-		Task:        NewTaskService(db, cfg),
+		Task:        NewTaskService(db, cfg, vc),
 		TaskQuery:   NewTaskQueryService(db),
-		Doc:         NewDocService(db, cfg.LLM.BaseURL),
+		Doc:         NewDocService(db, vc),
 		Search:      searchSvc,
 		Relation:    NewRelationService(db),
 		Requirement: NewRequirementService(searchSvc, cfg),
 	}
+}
+
+// chromaURLFromConfig 由向量配置拼接 chroma HTTP 地址（host 为空时返回空串）。
+func chromaURLFromConfig(cfg *config.VectorConfig) string {
+	if cfg.Host == "" {
+		return ""
+	}
+	return fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port)
 }
 
 // 各服务依赖的仓库统一在此构建，避免重复初始化。
