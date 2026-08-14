@@ -42,6 +42,13 @@ task_queue:
   max_retry: 3    # 任务最大重试次数（TASK_QUEUE_MAX_RETRY）
   concurrency: 2  # 消费协程数（TASK_QUEUE_CONCURRENCY）
 
+# 解析流水线文件过滤规则（逗号分隔，环境变量可覆盖）
+# 命中规则的文件跳过 AST 解析，不生成文档，并记录跳过日志
+filter:
+  ignore_dirs: 'vendor,node_modules,mock,fixture' # 忽略目录名（路径任意层级命中即跳过；FILTER_IGNORE_DIRS）
+  ignore_file_re: '_test\.go$'                    # 忽略文件正则（匹配相对路径；FILTER_IGNORE_FILE_REGEX）
+  allow_exts: 'go,php'                            # 允许的代码文件后缀，不含点（FILTER_ALLOW_EXTS）
+
 # AI 大模型配置
 llm:
   provider: "" # openai / ollama / deepseek 等

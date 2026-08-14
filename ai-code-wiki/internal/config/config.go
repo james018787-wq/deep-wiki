@@ -17,6 +17,7 @@ type Config struct {
 	Git       GitConfig       `yaml:"git"`
 	Vector    VectorConfig    `yaml:"vector"`
 	TaskQueue TaskQueueConfig `yaml:"task_queue"`
+	Filter    FilterConfig    `yaml:"filter"`
 	LLM       LLMConfig       `yaml:"llm"`
 }
 
@@ -45,6 +46,13 @@ type GitConfig struct {
 	RepoURL       string `yaml:"repo_url"`
 	CloneDir      string `yaml:"clone_dir"`
 	DefaultBranch string `yaml:"default_branch"`
+}
+
+// FilterConfig 解析流水线文件过滤规则（逗号分隔字符串，空则回退到默认规则）。
+type FilterConfig struct {
+	IgnoreDirs   string `yaml:"ignore_dirs"`    // 忽略目录名，如 vendor,node_modules,mock,fixture（FILTER_IGNORE_DIRS）
+	IgnoreFileRe string `yaml:"ignore_file_re"` // 忽略文件正则（匹配相对路径），如 _test\.go$（FILTER_IGNORE_FILE_REGEX）
+	AllowExts    string `yaml:"allow_exts"`     // 允许的代码文件后缀，如 go,php（FILTER_ALLOW_EXTS）
 }
 
 // VectorConfig 向量库配置。
@@ -136,6 +144,11 @@ func (c *Config) ApplyEnv() {
 	c.TaskQueue.QueueName = envStr("TASK_QUEUE_NAME", c.TaskQueue.QueueName)
 	c.TaskQueue.MaxRetry = envInt("TASK_QUEUE_MAX_RETRY", c.TaskQueue.MaxRetry)
 	c.TaskQueue.Concurrency = envInt("TASK_QUEUE_CONCURRENCY", c.TaskQueue.Concurrency)
+
+	// 解析流水线文件过滤规则（逗号分隔；未设置时回退到 yaml/默认值）
+	c.Filter.IgnoreDirs = envStr("FILTER_IGNORE_DIRS", c.Filter.IgnoreDirs)
+	c.Filter.IgnoreFileRe = envStr("FILTER_IGNORE_FILE_REGEX", c.Filter.IgnoreFileRe)
+	c.Filter.AllowExts = envStr("FILTER_ALLOW_EXTS", c.Filter.AllowExts)
 
 	// LLM 服务地址（Python 微服务）
 	c.LLM.BaseURL = envStr("LLM_SERVICE_URL", c.LLM.BaseURL)

@@ -150,6 +150,9 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 | `TASK_QUEUE_NAME` | task_queue.queue_name | ai-code-wiki-task | 任务队列名（RabbitMQ 下自动创建持久化队列） |
 | `TASK_QUEUE_MAX_RETRY` | task_queue.max_retry | 3 | 任务最大重试次数，消费失败自动重投，超过上限标记任务失败 |
 | `TASK_QUEUE_CONCURRENCY` | task_queue.concurrency | 2 | 任务消费协程数（内存与 RabbitMQ 均生效） |
+| `FILTER_IGNORE_DIRS` | filter.ignore_dirs | vendor,node_modules,mock,fixture | 解析流水线忽略的目录名（逗号分隔，路径任意层级命中即跳过文件，如第三方依赖/测试数据目录） |
+| `FILTER_IGNORE_FILE_REGEX` | filter.ignore_file_re | `_test\.go$` | 解析流水线忽略的文件正则（逗号分隔，匹配相对路径，如 Go 测试文件 `*_test.go`） |
+| `FILTER_ALLOW_EXTS` | filter.allow_exts | go,php | 解析流水线允许解析的代码文件后缀（逗号分隔，不含点；非业务代码后缀直接跳过） |
 
 > 说明：
 > - `API_SECRET_KEY` 由 `internal/middleware` 直接读取，不经过 config.yaml。

@@ -19,6 +19,7 @@ import (
 	"ai-code-wiki/pkg/astgo"
 	"ai-code-wiki/pkg/astphp"
 	"ai-code-wiki/pkg/common"
+	"ai-code-wiki/pkg/filefilter"
 	"ai-code-wiki/pkg/git"
 	"ai-code-wiki/pkg/logger"
 	"ai-code-wiki/pkg/taskqueue"
@@ -33,10 +34,11 @@ type TaskService struct {
 	db         *gorm.DB
 	taskRepo   *repo.TaskRecordRepo
 	docRepo    *repo.CodeFunctionDocRepo
-	gitCfg     *config.GitConfig   // git 仓库配置
-	llmBaseURL string              // Python LLM 服务地址（LLM_SERVICE_URL）
-	vc         vector.VectorClient // 向量存储抽象（业务不感知 chroma/milvus）
-	queue      taskqueue.TaskQueue // 异步任务队列（提交入口，消费由独立 Worker 完成）
+	gitCfg     *config.GitConfig      // git 仓库配置
+	llmBaseURL string                 // Python LLM 服务地址（LLM_SERVICE_URL）
+	vc         vector.VectorClient    // 向量存储抽象（业务不感知 chroma/milvus）
+	queue      taskqueue.TaskQueue    // 异步任务队列（提交入口，消费由独立 Worker 完成）
+	fileFilter *filefilter.FileFilter // 文件过滤规则（跳过测试/依赖/非业务代码）
 }
 
 // NewTaskService 构建任务服务。
@@ -50,6 +52,11 @@ func NewTaskService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient, que
 		llmBaseURL: cfg.LLM.BaseURL,
 		vc:         vc,
 		queue:      queue,
+		fileFilter: filefilter.New(filefilter.Config{
+			IgnoreDirs:   filefilter.SplitList(cfg.Filter.IgnoreDirs),
+			IgnoreFileRe: filefilter.SplitList(cfg.Filter.IgnoreFileRe),
+			AllowExts:    filefilter.SplitList(cfg.Filter.AllowExts),
+		}),
 	}
 }
 
@@ -68,7 +75,7 @@ type TriggerTaskReq struct {
 //
 // 任务流水线：
 //
-//	接收task -> git拉取代码 -> git diff获取变更文件 -> 过滤.go/.php文件
+//	接收task -> git拉取代码 -> git diff获取变更文件 -> 过滤业务代码文件（跳过测试/依赖/非业务后缀）
 //	-> 按扩展名解析（.go走go ast，.php走简易正则）提取函数 -> 调用Python LLM服务生成业务文档。
 func (s *TaskService) TriggerTask(ctx context.Context, req *TriggerTaskReq) (*model.TaskRecord, error) {
 	_ = ctx
@@ -210,7 +217,8 @@ func sameRepo(a, b string) bool {
 	return norm(a) == norm(b)
 }
 
-// process 核心流水线：git拉取 -> diff -> 过滤.go -> AST解析 -> LLM生成文档。
+// process 核心流水线：git拉取 -> diff -> 过滤业务代码文件 -> AST解析 -> LLM生成文档。
+// 文件过滤命中测试文件/依赖目录/非业务后缀等规则时直接跳过，不解析、不生成文档。
 func (s *TaskService) process(ctx context.Context, task *model.TaskRecord) error {
 	// 1. git 拉取/更新代码
 	if strings.TrimSpace(s.gitCfg.RepoURL) == "" {
@@ -228,15 +236,17 @@ func (s *TaskService) process(ctx context.Context, task *model.TaskRecord) error
 		return fmt.Errorf("获取diff变更文件失败: %w", err)
 	}
 
-	// 3. 过滤 .go / .php 文件
+	// 3. 过滤业务代码文件：扩展名 + 忽略目录 + 忽略文件正则（跳过测试/依赖/非业务代码）
 	var codeFiles []string
 	for _, f := range files {
-		if strings.HasSuffix(f, ".go") || strings.HasSuffix(f, ".php") {
-			codeFiles = append(codeFiles, f)
+		if skip, reason := s.fileFilter.ShouldSkip(f); skip {
+			logger.Info(ctx, "任务 %s 跳过文件 %s：%s", task.TaskID, f, reason)
+			continue
 		}
+		codeFiles = append(codeFiles, f)
 	}
 	if len(codeFiles) == 0 {
-		logger.Info(ctx, "任务 %s 无 .go/.php 文件变更", task.TaskID)
+		logger.Info(ctx, "任务 %s 无业务代码文件变更（已全部被过滤规则跳过）", task.TaskID)
 		return nil
 	}
 
