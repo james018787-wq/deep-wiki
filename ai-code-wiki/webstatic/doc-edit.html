@@ -81,8 +81,8 @@
       <div class="actions">
         <button class="btn-save" :disabled="saving" @click="save">保存校正</button>
         <button class="btn-reset" :disabled="saving" @click="reset">重置为原始AI版本</button>
-        <button class="btn-back" @click="location.href = 'doc-history.html?doc_id=' + docId">历史版本</button>
-        <button class="btn-back" @click="location.href = 'docs.html'">返回列表</button>
+        <button class="btn-back" @click="goHistory">历史版本</button>
+        <button class="btn-back" @click="goList">返回列表</button>
       </div>
 
       <div class="msg err" v-if="error">{{ error }}</div>
@@ -112,6 +112,12 @@
       methods: {
         docPath() {
           return '/doc/' + this.docId;
+        },
+        goHistory() {
+          location.href = 'doc-history.html?doc_id=' + this.docId;
+        },
+        goList() {
+          location.href = 'docs.html';
         },
         async load() {
           this.error = '';

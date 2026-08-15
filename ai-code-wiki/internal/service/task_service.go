@@ -34,6 +34,7 @@ type TaskService struct {
 	db         *gorm.DB
 	taskRepo   *repo.TaskRecordRepo
 	docRepo    *repo.CodeFunctionDocRepo
+	moduleRepo *repo.BusinessModuleRepo
 	gitCfg     *config.GitConfig      // git 仓库配置
 	llmBaseURL string                 // Python LLM 服务地址（LLM_SERVICE_URL）
 	llmTimeout time.Duration          // LLM 生成文档调用超时（LLM_TIMEOUT，默认 60s）
@@ -49,6 +50,7 @@ func NewTaskService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient, que
 		db:         db,
 		taskRepo:   newTaskRepo(db),
 		docRepo:    newDocRepo(db),
+		moduleRepo: repo.NewBusinessModuleRepo(db),
 		gitCfg:     &cfg.Git,
 		llmBaseURL: cfg.LLM.BaseURL,
 		llmTimeout: llmCallTimeout(cfg.LLM.Timeout, defaultLLMTimeoutSec),
@@ -338,6 +340,11 @@ func (s *TaskService) processFunc(file, funcName, code string) error {
 	// 推导模块名（取文件路径首段目录）
 	moduleName := moduleNameFromPath(file)
 
+	// 登记业务模块（不存在则创建），保证 /doc/module/list 下拉有数据
+	if err := s.ensureModule(moduleName); err != nil {
+		logger.Warn(context.Background(), "登记业务模块失败 module=%s: %v", moduleName, err)
+	}
+
 	// 调用 Python LLM 服务生成标准化业务文档
 	data, rawJSON, err := s.generateDoc(moduleName, file, code)
 	if err != nil {
@@ -497,6 +504,15 @@ func moduleNameFromPath(file string) string {
 		}
 	}
 	return "default"
+}
+
+// ensureModule 登记业务模块：不存在则创建（幂等），模块说明留空。
+func (s *TaskService) ensureModule(moduleName string) error {
+	if strings.TrimSpace(moduleName) == "" {
+		return nil
+	}
+	_, err := s.moduleRepo.EnsureModule(moduleName, "")
+	return err
 }
 
 // isDuplicateKeyError 判断是否为数据库唯一键冲突（并发触发同一任务时命中 idx_task_id）。

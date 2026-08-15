@@ -121,12 +121,23 @@ func (s *DocService) EditDoc(ctx context.Context, docID int64, req *EditDocReq) 
 		}
 
 		// 3. 更新生效字段（不触碰 origin_auto_doc）
+		// 仅更新请求中提供的非空字段，未提供的字段保留原值（支持部分编辑）
 		now := time.Now()
-		doc.Summary = req.Summary
-		doc.InputDesc = req.InputDesc
-		doc.OutputDesc = req.OutputDesc
-		doc.ProcessFlow = req.ProcessFlow
-		doc.RiskPoint = req.RiskPoint
+		if req.Summary != "" {
+			doc.Summary = req.Summary
+		}
+		if req.InputDesc != "" {
+			doc.InputDesc = req.InputDesc
+		}
+		if req.OutputDesc != "" {
+			doc.OutputDesc = req.OutputDesc
+		}
+		if req.ProcessFlow != "" {
+			doc.ProcessFlow = req.ProcessFlow
+		}
+		if req.RiskPoint != "" {
+			doc.RiskPoint = req.RiskPoint
+		}
 		doc.ContentSource = common.ContentSourceManual // 2=人工校正
 		doc.LastEditUser = req.Operator
 		doc.LastEditTime = &now

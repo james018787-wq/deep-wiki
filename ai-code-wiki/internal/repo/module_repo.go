@@ -27,3 +27,14 @@ func (r *BusinessModuleRepo) ListAll() ([]*model.BusinessModule, error) {
 	err := withNotDeleted(r.DB).Order("id asc").Find(&list).Error
 	return list, err
 }
+
+// EnsureModule 确保业务模块存在（不存在则创建），返回模块记录（幂等）。
+func (r *BusinessModuleRepo) EnsureModule(moduleName, desc string) (*model.BusinessModule, error) {
+	module := &model.BusinessModule{ModuleName: moduleName, Desc: desc}
+	if err := r.DB.Where("module_name = ?", moduleName).
+		Attrs(model.BusinessModule{Desc: desc}).
+		FirstOrCreate(module).Error; err != nil {
+		return nil, err
+	}
+	return module, nil
+}

@@ -45,7 +45,7 @@
     <div class="panel">
       <div class="toolbar">
         <span style="font-size:14px;font-weight:600;">文档历史版本（doc_id={{ docId }}）</span>
-        <button @click="location.href = 'doc-edit.html?doc_id=' + docId">返回编辑</button>
+        <button @click="goEdit">返回编辑</button>
         <button @click="load()">刷新</button>
       </div>
 
@@ -116,6 +116,9 @@
         };
       },
       methods: {
+        goEdit() {
+          location.href = 'doc-edit.html?doc_id=' + this.docId;
+        },
         load() {
           this.error = '';
           this.loading = true;

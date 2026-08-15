@@ -22,3 +22,5 @@ venv/
 .idea/
 .vscode/
 .DS_Store
+# 本地测试仓库夹具（含 main/feature 分支，git 内嵌仓库不入库）
+testrepo/

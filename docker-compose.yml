@@ -77,8 +77,14 @@ services:
       CHROMA_URL: http://chroma:8000
       # Python llm服务地址
       LLM_SERVICE_URL: http://ai-wiki-llm:9000
+      # 代码解析仓库（本地测试仓库，含 main / feature 分支）
+      GIT_REPO_URL: /app/testrepo
+      GIT_DEFAULT_BRANCH: main
     volumes:
       - ./repo_cache:/app/repo_cache
+      - ./testrepo:/app/testrepo:ro
+      # webstatic 前端目录挂载进容器，host 修改即生效，无需重建镜像
+      - ./ai-code-wiki/webstatic:/app/webstatic:ro
     #开发阶段建议注释，本地IDE运行go；上线打开
 #    deploy:
 #      resources:
