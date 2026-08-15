@@ -123,6 +123,9 @@ services:
       start_period: 30s
     volumes:
       - ./ai-wiki-llm/logs:/app/logs
+      # 挂载整个项目目录（只读）：model_pool.yaml 修改后约 5s 热重载生效，无需重建镜像。
+      # 注意：挂载目录而非单文件——单文件 bind mount 绑定 inode，sed -i 等 rename 替换不可见。
+      - ./ai-wiki-llm:/app:ro
 
   # 可选：生产环境异步任务队列（TASK_QUEUE_DRIVER=rabbitmq 时启用）
   # 需在 ai-code-wiki-api 环境变量中配置 RABBITMQ_URL 与 TASK_QUEUE_DRIVER=rabbitmq
