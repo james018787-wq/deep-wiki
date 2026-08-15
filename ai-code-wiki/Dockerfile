@@ -3,6 +3,10 @@ FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 
+# 国内网络使用 goproxy.cn 加速依赖下载（构建时可用 --build-arg GOPROXY=... 覆盖）
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=$GOPROXY
+
 # 先拷贝依赖清单，利用 docker 层缓存加速构建
 COPY go.mod go.sum ./
 RUN go mod download

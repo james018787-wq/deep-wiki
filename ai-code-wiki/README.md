@@ -39,7 +39,7 @@ AI 代码知识库系统。通过 CI 触发的代码解析任务，自动提取�
 | 需求分析 | 需求 → 结构化分析 | 复用检索流水线，LLM 输出 JSON |
 | 多模型调度 | 优先低价 + 故障降级熔断 | 收口于 ai-wiki-llm（Python），Redis 分布式熔断/限流 |
 | 平台能力 | API 密钥鉴权 / request_id 日志 / 健康检查 | MVP 单密钥，统一日志工具 |
-| 异步任务 | 任务队列抽象接口 | 当前 goroutine 本地执行，预留 MQ 扩展 |
+| 异步任务 | 任务队列抽象接口 | 已实现 memory（本地 channel）与 rabbitmq（持久化+手动 ACK），`TASK_QUEUE_DRIVER` 切换 |
 
 ### 1.3 技术栈
 
@@ -67,10 +67,14 @@ ai-code-wiki/
 ├── pkg/
 │   ├── astgo/               # Go 源码 AST 解析
 │   ├── astphp/              # PHP 源码简易解析
+│   ├── common/              # 统一错误码 / 响应 / 工具
+│   ├── filefilter/          # 解析流水线文件过滤规则
 │   ├── git/                 # git 命令封装
 │   ├── logger/              # 统一日志工具
-│   ├── taskqueue/           # 异步任务队列抽象
-│   └── vector/              # 向量库通用接口
+│   ├── taskqueue/           # 异步任务队列抽象（memory / rabbitmq）
+│   ├── vector/              # 向量库通用接口
+│   └── webhook/             # webhook 签名校验
+├── docs/                    # 架构与设计文档（architecture / multi-model-scheduler）
 ├── init_sql/init.sql        # 建表脚本（docker 自动导入）
 ├── docker-compose.yml
 └── Dockerfile
@@ -173,7 +177,8 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 
 | 变量 | 说明 |
 | ---- | ---- |
-| `LLM_SERVICE_URL` / `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `LLM_MODEL` | 文档生成 / 变更摘要单模型（Go 不直接使用，走 ai-wiki-llm） |
+| `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL`（或 `LLM_MODEL`） | 文档生成 / 变更摘要单模型（openai 供应商） |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | 文档生成 / 变更摘要单模型（anthropic 供应商，`LLM_PROVIDER=anthropic`） |
 | `DEEPSEEK_API_KEY` / `DASHSCOPE_API_KEY` 等 | 多模型池密钥，对应 `model_pool.yaml` 中 `api_key: "${ENV}"` 占位 |
 | `MODEL_POOL_FILE` | 模型池配置文件路径（默认 `model_pool.yaml`） |
 | `REDIS_ADDR` / `REDIS_HOST`+`REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DB` | 多模型调度分布式熔断/限流状态存储（可选；未配置或故障时 fail-open，不阻断业务） |
@@ -207,7 +212,7 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | POST | `/api/v1/requirement/analyze` | 需求分析，body: `{user_requirement, force_model?, force_high_quality?}` |
 | GET | `/api/v1/report/basic` | 基础统计：总文档数 / 人工校正数 / 自动生成数 / 待复核数 / 模块总数 |
 
-### 4.2 极简前端
+### 4.1 极简前端
 
 `./webstatic` 提供原生 HTML + Vue3 CDN 页面（无构建），由后端 `/webstatic` 静态路由挂载：
 
@@ -218,7 +223,7 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 
 鉴权密钥在 `webstatic/config.js` 的 `apiSecret` 配置（与后端 `API_SECRET_KEY` 一致）。
 
-### 4.1 典型调用示例
+### 4.2 典型调用示例
 
 ```bash
 # 触发任务（本地开发未启用鉴权）

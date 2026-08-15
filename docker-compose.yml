@@ -25,7 +25,7 @@ services:
       retries: 5
 
   chroma:
-    image: chromadb/chroma:0.6.3
+    image: chromadb/chroma:0.5.3
     container_name: ai-code-wiki-chroma
     restart: always
     ports:
@@ -36,10 +36,11 @@ services:
       TZ: Asia/Shanghai
       ALLOW_RESET: "true"
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/api/v1/heartbeat"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/v1/heartbeat"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 20s
 
   # Go后端服务，本地开发可注释掉，在IDE运行；生产开启
   ai-code-wiki-api:
@@ -100,11 +101,13 @@ services:
     environment:
       TZ: Asia/Shanghai
       CHROMA_URL: http://chroma:8000
-      OPENAI_API_KEY: "your-api-key-here"
-      OPENAI_BASE_URL: "https://api.openai.com/v1"
-      LLM_MODEL: "gpt-4o"
+      # 对话/文档生成：DeepSeek（OpenAI 兼容协议；密钥经 compose .env 注入 DEEPSEEK_API_KEY）
+      # 注意：向量化（embedding）无独立源时不可用，RAG 检索会降级
+      OPENAI_API_KEY: "${DEEPSEEK_API_KEY}"
+      OPENAI_BASE_URL: "https://api.deepseek.com/v1"
+      LLM_MODEL: "deepseek-chat"
       # 多模型调度（/api/chat）：模型池见 ai-wiki-llm/model_pool.yaml，密钥经环境变量注入
-      # DEEPSEEK_API_KEY: "your-deepseek-key"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY}"
       # DASHSCOPE_API_KEY: "your-dashscope-key"
       # 分布式熔断/限流状态（启用上方 redis 服务后配置）
       # REDIS_ADDR: "redis:6379"
