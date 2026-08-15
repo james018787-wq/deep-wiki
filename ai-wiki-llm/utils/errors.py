@@ -4,7 +4,7 @@ from typing import Any, Optional
 class ServiceError(Exception):
     """业务异常基类，所有服务层自定义异常继承自此类。
 
-    约束：捕获 LLM/向量库异常后转换为本类，对外友好返回错误信息。
+    约束：捕获 LLM 异常后转换为本类，对外友好返回错误信息。
     """
 
     def __init__(self, code: int, message: str, cause: Optional[Exception] = None):
@@ -29,13 +29,6 @@ class EmbeddingError(ServiceError):
 
     def __init__(self, message: str = "向量化失败", cause: Optional[Exception] = None):
         super().__init__(code=5002, message=message, cause=cause)
-
-
-class VectorStoreError(ServiceError):
-    """向量库操作异常"""
-
-    def __init__(self, message: str = "向量库操作失败", cause: Optional[Exception] = None):
-        super().__init__(code=5003, message=message, cause=cause)
 
 
 class ParamError(ServiceError):

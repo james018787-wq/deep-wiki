@@ -101,12 +101,8 @@ services:
     restart: always
     ports:
       - "9000:9000"
-    depends_on:
-      chroma:
-        condition: service_healthy
     environment:
       TZ: Asia/Shanghai
-      CHROMA_URL: http://chroma:8000
       # 对话/文档生成：DeepSeek（OpenAI 兼容协议；密钥经 compose .env 注入 DEEPSEEK_API_KEY）
       OPENAI_API_KEY: "${DEEPSEEK_API_KEY}"
       OPENAI_BASE_URL: "https://api.deepseek.com/v1"

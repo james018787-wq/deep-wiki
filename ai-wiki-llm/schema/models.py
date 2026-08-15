@@ -67,51 +67,6 @@ class EmbeddingResponse(BaseModel):
 
 
 # ============ RAG 重排 ============
-class CandidateDoc(BaseModel):
-    """候选文档条目"""
-
-    doc_id: int = Field(0, description="文档id")
-    module_name: str = Field("", description="所属模块")
-    func_name: str = Field("", description="函数名称")
-    content: str = Field("", description="文档内容")
-    score: float = Field(0.0, description="原始检索得分")
-
-
-class RerankRequest(BaseModel):
-    """候选文档重排请求"""
-
-    query: str = Field(..., min_length=1, description="用户查询")
-    candidates: list[CandidateDoc] = Field(..., description="候选文档列表")
-
-
-class RerankItem(BaseModel):
-    """重排结果条目"""
-
-    doc_id: int = Field(0, description="文档id")
-    module_name: str = Field("", description="所属模块")
-    func_name: str = Field("", description="函数名称")
-    content: str = Field("", description="文档内容")
-    score: float = Field(0.0, description="重排后得分")
-
-
-class RerankResponse(BaseModel):
-    """重排结果响应"""
-
-    items: list[RerankItem] = Field(..., description="按相关性降序的文档列表")
-
-
-# ============ 向量文档同步 ============
-class UpsertDocRequest(BaseModel):
-    """向量文档写入/更新请求（Go 侧人工校正/重置后异步调用）"""
-
-    doc_id: int = Field(..., description="关联 code_function_doc 主键")
-    module_name: str = Field("", description="所属模块")
-    file_path: str = Field("", description="文件路径")
-    func_name: str = Field("", description="函数名称")
-    content: str = Field("", description="向量化文本内容")
-    metadata: dict = Field(default_factory=dict, description="附加元数据")
-
-
 # ============ 通用对话 ============
 class ChatRequest(BaseModel):
     """通用对话请求（RAG 问答等）。

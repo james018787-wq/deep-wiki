@@ -1,7 +1,10 @@
 """ai-wiki-llm 入口：FastAPI 应用初始化与路由注册。
 
-作用：提供 LLM 调用、文档生成、向量嵌入、RAG 辅助能力，
+作用：提供 LLM 调用、文档生成、向量嵌入能力，
 对外提供 HTTP 接口供 Golang 服务远程调用。
+
+约束：向量库（Chroma/Milvus）的存取统一由 Golang 侧
+pkg/vector.VectorClient 负责，本服务不做向量库读写。
 """
 
 from fastapi import FastAPI, Request
@@ -19,16 +22,11 @@ from schema.models import (
     GenerateDiffLogResponse,
     GenerateDocRequest,
     GenerateDocResponse,
-    RerankRequest,
-    RerankResponse,
-    UpsertDocRequest,
 )
 from service.doc_generator import DocGenerator
 from service.embed_service import EmbedService
 from service.llm_service import LLMService
-from service.retrieval_service import RetrievalService
 from service.scheduler import Scheduler, build_scheduler
-from service.vector_store import VectorStore
 from utils.errors import ServiceError
 from utils.logging import logger
 
@@ -36,8 +34,6 @@ from utils.logging import logger
 llm_service = LLMService()
 embed_service = EmbedService()
 doc_generator = DocGenerator(llm_service)
-vector_store = VectorStore(embed_service.embedding_model)
-retrieval_service = RetrievalService(vector_store)
 # 多模型调度器（优先低价，失败自动降级；Redis 分布式熔断/限流）
 scheduler: Scheduler = build_scheduler()
 
@@ -90,29 +86,6 @@ def embedding_text(req: EmbeddingRequest) -> ApiResponse:
         message="success",
         data=EmbeddingResponse(vector=vector, dimension=len(vector), model="text-embedding-3-small").model_dump(),
     )
-
-
-# ============ 接口：RAG 重排 ============
-@app.post("/api/rag/rerank", response_model=ApiResponse)
-def rag_rerank(req: RerankRequest) -> ApiResponse:
-    """候选文档列表 + 用户 query，返回重排后的文档（简易实现）。"""
-    items = retrieval_service.rerank(req.query, req.candidates)
-    return ApiResponse(code=0, message="success", data=RerankResponse(items=items).model_dump())
-
-
-# ============ 接口：向量文档同步 ============
-@app.post("/api/vector/upsert_doc", response_model=ApiResponse)
-def vector_upsert_doc(req: UpsertDocRequest) -> ApiResponse:
-    """写入/更新单篇文档向量（Go 侧人工校正/重置后异步调用）。
-
-    约束：保证向量检索使用最新校正内容。
-    """
-    retrieval_service.upsert_doc(
-        doc_id=str(req.doc_id),
-        content=req.content,
-        metadata={"module_name": req.module_name, "func_name": req.func_name, "file_path": req.file_path, **req.metadata},
-    )
-    return ApiResponse(code=0, message="success", data=None)
 
 
 # ============ 接口：通用对话 ============
