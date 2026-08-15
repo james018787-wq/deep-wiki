@@ -11,6 +11,8 @@ from fastapi.responses import JSONResponse
 from config import settings
 from schema.models import (
     ApiResponse,
+    ChatRequest,
+    ChatResponse,
     EmbeddingRequest,
     EmbeddingResponse,
     GenerateDiffLogRequest,
@@ -20,12 +22,12 @@ from schema.models import (
     RerankRequest,
     RerankResponse,
     UpsertDocRequest,
-    ChatRequest,
 )
 from service.doc_generator import DocGenerator
 from service.embed_service import EmbedService
 from service.llm_service import LLMService
 from service.retrieval_service import RetrievalService
+from service.scheduler import Scheduler, build_scheduler
 from service.vector_store import VectorStore
 from utils.errors import ServiceError
 from utils.logging import logger
@@ -36,6 +38,8 @@ embed_service = EmbedService()
 doc_generator = DocGenerator(llm_service)
 vector_store = VectorStore(embed_service.embedding_model)
 retrieval_service = RetrievalService(vector_store)
+# 多模型调度器（优先低价，失败自动降级；Redis 分布式熔断/限流）
+scheduler: Scheduler = build_scheduler()
 
 # ============ 应用 ============
 app = FastAPI(
@@ -114,9 +118,20 @@ def vector_upsert_doc(req: UpsertDocRequest) -> ApiResponse:
 # ============ 接口：通用对话 ============
 @app.post("/api/chat", response_model=ApiResponse)
 def chat(req: ChatRequest) -> ApiResponse:
-    """通用大模型对话（Go 侧 RAG 问答：传入上下文+用户问题，返回回答）。"""
-    answer = llm_service.chat(req.system, req.user)
-    return ApiResponse(code=0, message="success", data={"answer": answer})
+    """通用大模型对话（RAG 问答/需求分析）。
+
+    经多模型调度器：优先低价，失败自动降级切换下一档；
+    支持 force_model / force_high_quality / estimated_tokens 覆盖。
+    返回回答与调度元信息（used_model / switch_count / cost 等）。
+    """
+    data = scheduler.chat(
+        system=req.system,
+        user=req.user,
+        force_model=req.force_model,
+        force_high_quality=req.force_high_quality,
+        estimated_tokens=req.estimated_tokens,
+    )
+    return ApiResponse(code=0, message="success", data=ChatResponse(**data).model_dump())
 
 
 # ============ 健康检查 ============

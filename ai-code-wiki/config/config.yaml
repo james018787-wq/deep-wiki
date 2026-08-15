@@ -57,11 +57,3 @@ llm:
   api_key: ""
   model: ""
   timeout: 60 # LLM 调用超时（秒），LLM_TIMEOUT 覆盖
-
-# Redis 配置（多模型调度的分布式熔断/限流状态存储）
-# addr 为空则不启用熔断/限流（fail-open，直接按顺序尝试模型）
-# 环境变量：REDIS_ADDR（或 REDIS_HOST+REDIS_PORT）/ REDIS_PASSWORD / REDIS_DB
-redis:
-  addr: ""
-  password: ""
-  db: 0

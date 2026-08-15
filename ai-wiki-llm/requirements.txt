@@ -11,3 +11,4 @@ langchain-chroma==0.1.4
 python-dotenv==1.0.1
 tenacity==8.4.1
 requests==2.32.3
+redis==5.0.7

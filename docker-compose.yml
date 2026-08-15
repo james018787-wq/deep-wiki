@@ -103,6 +103,11 @@ services:
       OPENAI_API_KEY: "your-api-key-here"
       OPENAI_BASE_URL: "https://api.openai.com/v1"
       LLM_MODEL: "gpt-4o"
+      # 多模型调度（/api/chat）：模型池见 ai-wiki-llm/model_pool.yaml，密钥经环境变量注入
+      # DEEPSEEK_API_KEY: "your-deepseek-key"
+      # DASHSCOPE_API_KEY: "your-dashscope-key"
+      # 分布式熔断/限流状态（启用上方 redis 服务后配置）
+      # REDIS_ADDR: "redis:6379"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:9000/health',timeout=3).getcode()==200 else 1)"]
       interval: 10s
@@ -129,8 +134,8 @@ services:
   #     timeout: 5s
   #     retries: 5
 
-  # 可选：多模型调度分布式熔断/限流状态存储（redis）
-  # 需在 ai-code-wiki-api 环境变量中配置 REDIS_ADDR=redis:6379；不启用时熔断/限流降级 fail-open
+  # 可选：多模型调度分布式熔断/限流状态存储（redis，归 ai-wiki-llm 使用）
+  # 需在 ai-wiki-llm 环境变量中配置 REDIS_ADDR=redis:6379；不启用时熔断/限流降级 fail-open
   # redis:
   #   image: redis:7-alpine
   #   container_name: ai-code-wiki-redis

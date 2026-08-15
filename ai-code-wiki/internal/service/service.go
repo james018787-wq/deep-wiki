@@ -7,10 +7,8 @@ import (
 	"time"
 
 	"ai-code-wiki/internal/config"
-	"ai-code-wiki/internal/llm"
 	"ai-code-wiki/internal/repo"
 	"ai-code-wiki/pkg/logger"
-	"ai-code-wiki/pkg/redis"
 	"ai-code-wiki/pkg/taskqueue"
 	"ai-code-wiki/pkg/vector"
 
@@ -43,13 +41,7 @@ type Service struct {
 
 	TaskQueue  taskqueue.TaskQueue // 异步任务队列（SubmitTask 提交，worker 消费）
 	TaskWorker *TaskWorker         // 独立消费协程 Worker（消费解析/向量任务）
-
-	ModelPool *llm.ModelPool // 模型池（main 退出时 Close）
-	Redis     *redis.Client  // Redis 客户端（main 退出时 Close）
 }
-
-// modelPoolFile 模型池配置文件路径（相对工作目录，与 config.yaml 同级）。
-const modelPoolFile = "config/model.yaml"
 
 // NewService 构建业务服务聚合对象，注入依赖。
 // cfg 提供向量化服务（Python LLM 微服务）地址等外部依赖配置。
@@ -84,26 +76,8 @@ func NewService(db *gorm.DB, cfg *config.Config) (*Service, error) {
 		return nil, err
 	}
 
-	// 构建 Redis 客户端与多模型调度器（分布式熔断/限流状态存 Redis）
-	// Redis 未配置或不可用时降级 fail-open：不阻断业务，仅告警日志
-	var rdb *redis.Client
-	if cfg.Redis.Addr != "" {
-		rdb = redis.NewClient(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
-		if err := rdb.Ping(context.Background()); err != nil {
-			logger.Warn(context.Background(), "Redis 不可用，熔断/限流降级 fail-open: %v", err)
-		}
-	} else {
-		logger.Info(context.Background(), "未配置 Redis，熔断/限流不启用（fail-open）")
-	}
-	pool := llm.NewModelPool(modelPoolFile)
-	global := pool.Global()
-	cb := llm.NewCircuitBreaker(rdb, time.Duration(global.CircuitTTL)*time.Second, global.CircuitFailureThreshold)
-	rl := llm.NewRateLimiter(rdb, time.Duration(global.RatelimitWindowSec)*time.Second)
-	llmClient := llm.NewHTTPClient(llmCallTimeout(cfg.LLM.Timeout, defaultLLMTimeoutSec))
-	scheduler := llm.NewScheduler(pool, llmClient, cb, rl)
-
 	// 需求分析服务依赖检索服务，先构建检索服务
-	searchSvc := NewSearchService(db, cfg, vc, scheduler)
+	searchSvc := NewSearchService(db, cfg, vc)
 	taskSvc := NewTaskService(db, cfg, vc, queue)
 	s := &Service{
 		db:          db,
@@ -113,12 +87,10 @@ func NewService(db *gorm.DB, cfg *config.Config) (*Service, error) {
 		Doc:         NewDocService(db, vc, queue),
 		Search:      searchSvc,
 		Relation:    NewRelationService(db),
-		Requirement: NewRequirementService(searchSvc, cfg, scheduler),
+		Requirement: NewRequirementService(searchSvc, cfg),
 		Report:      NewReportService(db),
 		TaskQueue:   queue,
 		TaskWorker:  NewTaskWorker(queue, taskSvc, vc, cfg.TaskQueue.MaxRetry, cfg.TaskQueue.Concurrency),
-		ModelPool:   pool,
-		Redis:       rdb,
 	}
 	return s, nil
 }

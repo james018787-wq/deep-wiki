@@ -47,6 +47,26 @@ class VectorConfig:
     milvus_port: int = int(os.getenv("MILVUS_PORT", "19530"))
 
 
+class RedisConfig:
+    """Redis 配置：多模型调度的分布式熔断/限流状态存储。
+
+    未配置（addr 与 host 均为空）时不启用熔断/限流（fail-open）。
+    """
+
+    addr: str = os.getenv("REDIS_ADDR", "")  # 形如 redis:6379（与 REDIS_HOST+PORT 二选一）
+    host: str = os.getenv("REDIS_HOST", "")
+    port: int = int(os.getenv("REDIS_PORT", "6379"))
+    password: str = os.getenv("REDIS_PASSWORD", "")
+    db: int = int(os.getenv("REDIS_DB", "0"))
+
+
+class ModelPoolConfig:
+    """多模型池配置（model_pool.yaml，支持热重载与 ${ENV} 密钥占位）。"""
+
+    # 配置文件路径（相对工作目录；可由 MODEL_POOL_FILE 覆盖）
+    file: str = os.getenv("MODEL_POOL_FILE", "model_pool.yaml")
+
+
 class ServerConfig:
     """服务运行配置"""
 
@@ -60,6 +80,8 @@ class Settings:
 
     llm: LLMConfig = LLMConfig()
     vector: VectorConfig = VectorConfig()
+    redis: RedisConfig = RedisConfig()
+    model_pool: ModelPoolConfig = ModelPoolConfig()
     server: ServerConfig = ServerConfig()
 
 

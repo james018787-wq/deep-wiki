@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"ai-code-wiki/internal/config"
-	"ai-code-wiki/internal/llm"
 	"ai-code-wiki/internal/model"
 	"ai-code-wiki/internal/repo"
 	"ai-code-wiki/pkg/common"
@@ -33,14 +32,13 @@ type SearchService struct {
 	db           *gorm.DB
 	docRepo      *repo.CodeFunctionDocRepo
 	relationRepo *repo.ModuleRelationRepo
-	llmBaseURL   string              // Python LLM 微服务地址（用于 embedding 与回答生成）
-	chatTimeout  time.Duration       // 回答生成 LLM 调用超时（LLM_TIMEOUT，默认 60s）
+	llmBaseURL   string              // Python LLM 服务地址（embedding 与 /api/chat 调度）
+	chatTimeout  time.Duration       // 对话调用超时（LLM_TIMEOUT，默认 60s）
 	vc           vector.VectorClient // 向量存储抽象（业务不感知 chroma/milvus）
-	scheduler    *llm.Scheduler      // 多模型调度器（优先低价，失败自动降级）
 }
 
 // NewSearchService 构建检索服务。
-func NewSearchService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient, scheduler *llm.Scheduler) *SearchService {
+func NewSearchService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient) *SearchService {
 	return &SearchService{
 		db:           db,
 		docRepo:      newDocRepo(db),
@@ -48,7 +46,6 @@ func NewSearchService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient, s
 		llmBaseURL:   cfg.LLM.BaseURL,
 		chatTimeout:  llmCallTimeout(cfg.LLM.Timeout, defaultLLMTimeoutSec),
 		vc:           vc,
-		scheduler:    scheduler,
 	}
 }
 
@@ -107,26 +104,22 @@ func (s *SearchService) Search(ctx context.Context, req *SearchReq) (*SearchResu
 	// step6: 上下文截断与组装
 	contextPrompt := buildContextPrompt(recalled)
 
-	// step7: 多模型调度生成回答（优先低价，失败自动降级）
-	opt := llm.SchedulerOption{
-		ForceModel:        req.ForceModel,
-		ForceHighQuality:  req.ForceHighQuality,
-		EstimatedTokenLen: llm.EstimateTokens(contextPrompt + query),
-	}
-	sched, err := s.askLLM(ctx, query, contextPrompt, opt)
+	// step7: 经 ai-wiki-llm 多模型调度器生成回答（低价优先、失败降级在 Python 侧完成）
+	estimated := estimateTokens(contextPrompt + query)
+	sched, err := s.askLLM(ctx, query, contextPrompt, req.ForceModel, req.ForceHighQuality, estimated)
 	if err != nil {
 		return nil, err
 	}
 
 	logger.Info(ctx, "[search] 回答生成完成 query=%s used_model=%s switch_count=%d force_model=%s force_high_quality=%t estimated_context_token=%d input_token=%d output_token=%d cost=%.6f retried_model_list=%v",
-		query, sched.UsedModelName, sched.SwitchedCount, opt.ForceModel, opt.ForceHighQuality,
-		opt.EstimatedTokenLen, sched.TokenInput, sched.TokenOutput, sched.Cost, sched.RetriedModels)
+		query, sched.UsedModel, sched.SwitchCount, req.ForceModel, req.ForceHighQuality,
+		estimated, sched.TokenInput, sched.TokenOutput, sched.Cost, sched.RetriedModels)
 
 	return &SearchResult{
-		Answer:        sched.Content,
+		Answer:        sched.Answer,
 		ReferenceList: toReferenceList(recalled),
-		UsedModel:     sched.UsedModelName,
-		SwitchCount:   sched.SwitchedCount,
+		UsedModel:     sched.UsedModel,
+		SwitchCount:   sched.SwitchCount,
 		Cost:          sched.Cost,
 	}, nil
 }
@@ -272,27 +265,17 @@ func (s *SearchService) expandRecall(ctx context.Context, candidates []*model.Co
 	return append(candidates, relatedDocs...), nil
 }
 
-// askLLM 经多模型调度器调用 LLM 生成回答（带显式超时，避免上游异常拖垮接口）。
-func (s *SearchService) askLLM(ctx context.Context, query, contextPrompt string, opt llm.SchedulerOption) (*llm.SchedulerResult, error) {
-	if s.scheduler == nil {
-		return nil, common.NewError(common.CodeInvalidState, "AI 服务未配置")
-	}
-	ctx, cancel := context.WithTimeout(ctx, s.chatTimeout)
-	defer cancel()
+// askLLM 经 ai-wiki-llm 多模型调度器生成回答（带显式超时，避免上游异常拖垮接口）。
+func (s *SearchService) askLLM(ctx context.Context, query, contextPrompt string,
+	forceModel string, forceHighQuality bool, estimatedTokens int) (*chatLLMResult, error) {
 
 	system := "你是一名代码知识库问答助手，请根据提供的业务文档上下文，准确、简洁地回答用户问题。" +
 		"如果文档信息不足以回答，请如实说明，不要编造。"
 	user := contextPrompt + "\n\n用户问题: " + query + "\n请基于以上文档作答。"
 
-	sched, err := s.scheduler.Chat(ctx, system, user, opt)
+	sched, err := chatLLM(ctx, s.llmBaseURL, s.chatTimeout, system, user, forceModel, forceHighQuality, estimatedTokens)
 	if err != nil {
-		if errors.Is(err, llm.ErrAllFailed) {
-			return nil, common.WrapError(common.CodeUpstreamError, "所有模型服务暂时不可用，请稍后重试", err)
-		}
-		if errors.Is(err, llm.ErrNoModel) {
-			return nil, common.WrapError(common.CodeInvalidState, "AI 模型池未配置，请检查 model.yaml", err)
-		}
-		return nil, common.WrapError(common.CodeUpstreamError, "AI 服务暂时不可用，请稍后重试", err)
+		return nil, err
 	}
 	return sched, nil
 }

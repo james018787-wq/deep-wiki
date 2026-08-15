@@ -114,7 +114,26 @@ class UpsertDocRequest(BaseModel):
 
 # ============ 通用对话 ============
 class ChatRequest(BaseModel):
-    """通用对话请求（RAG 问答等）"""
+    """通用对话请求（RAG 问答等）。
+
+    支持多模型调度参数：force_model 强制指定模型、force_high_quality 仅用高配、
+    estimated_tokens 预估上下文 token 数（用于 max_context 过滤与 TPM 配额）。
+    """
 
     system: str = Field("", description="系统提示词")
     user: str = Field(..., min_length=1, description="用户内容（上下文+问题）")
+    force_model: str = Field("", description="可选：强制指定模型（不降级/不熔断/不限流）")
+    force_high_quality: bool = Field(False, description="可选：仅用高配模型（过滤低价模型）")
+    estimated_tokens: int = Field(0, description="可选：预估上下文 token 数")
+
+
+class ChatResponse(BaseModel):
+    """对话响应：含回答与调度元信息。"""
+
+    answer: str = Field("", description="模型回答")
+    used_model: str = Field("", description="实际使用的模型")
+    switch_count: int = Field(0, description="实际降级切换次数")
+    input_token: int = Field(0, description="输入 token")
+    output_token: int = Field(0, description="输出 token")
+    cost: float = Field(0.0, description="本次调用估算成本（元）")
+    retried_models: list = Field(default_factory=list, description="曾尝试但失败/被跳过的模型")

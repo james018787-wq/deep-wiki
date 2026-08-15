@@ -88,11 +88,5 @@ func main() {
 	}
 	workerCancel()
 	svc.TaskWorker.Stop()
-	if svc.Redis != nil {
-		_ = svc.Redis.Close()
-	}
-	if svc.ModelPool != nil {
-		svc.ModelPool.Close()
-	}
 	logger.Info(ctx, "服务已关闭")
 }

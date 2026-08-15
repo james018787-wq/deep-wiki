@@ -37,7 +37,7 @@ AI 代码知识库系统。通过 CI 触发的代码解析任务，自动提取�
 | 模块依赖图谱 | 上下游查询 / 人工新增 / 删除 | AST 识别 ∪ 人工关系，操作带日志 |
 | RAG 检索 | 自然语言跨模块检索 | Chroma 向量召回 + 模块依赖扩充 |
 | 需求分析 | 需求 → 结构化分析 | 复用检索流水线，LLM 输出 JSON |
-| 多模型调度 | 优先低价 + 故障降级熔断 | `internal/llm` 模型池调度，Redis 分布式熔断/限流 |
+| 多模型调度 | 优先低价 + 故障降级熔断 | 收口于 ai-wiki-llm（Python），Redis 分布式熔断/限流 |
 | 平台能力 | API 密钥鉴权 / request_id 日志 / 健康检查 | MVP 单密钥，统一日志工具 |
 | 异步任务 | 任务队列抽象接口 | 当前 goroutine 本地执行，预留 MQ 扩展 |
 
@@ -55,12 +55,10 @@ AI 代码知识库系统。通过 CI 触发的代码解析任务，自动提取�
 ```
 ai-code-wiki/
 ├── cmd/main.go              # 服务入口
-├── config/config.yaml       # 基础配置（含 redis 段）
-├── config/model.yaml        # 多模型池配置（热重载，密钥用 ${ENV} 占位）
+├── config/config.yaml       # 基础配置
 ├── internal/
 │   ├── config/              # 配置加载与环境变量覆盖
 │   ├── handler/             # HTTP 层（参数校验 + 统一响应）
-│   ├── llm/                 # 多模型调度（client / model_config / scheduler / circuit_breaker / rate_limit）
 │   ├── middleware/          # 请求追踪 / 异常恢复 / API鉴权
 │   ├── model/               # GORM 模型
 │   ├── repo/                # 数据访问层
@@ -71,12 +69,17 @@ ai-code-wiki/
 │   ├── astphp/              # PHP 源码简易解析
 │   ├── git/                 # git 命令封装
 │   ├── logger/              # 统一日志工具
-│   ├── redis/               # 轻量 Redis 客户端（标准库 RESP2，熔断/限流状态存储）
 │   ├── taskqueue/           # 异步任务队列抽象
 │   └── vector/              # 向量库通用接口
 ├── init_sql/init.sql        # 建表脚本（docker 自动导入）
 ├── docker-compose.yml
 └── Dockerfile
+
+ai-wiki-llm/                 # Python 模型门面（所有「调模型」能力收口于此）
+├── main.py                  # FastAPI 入口（/api/chat 多模型调度等）
+├── model_pool.yaml          # 多模型池配置（热重载，密钥用 ${ENV} 占位）
+├── service/scheduler.py     # 多模型调度（低价优先/降级/Redis 熔断/限流）
+└── ...
 ```
 
 ### 2.2 本地开发（不依赖 Docker）
@@ -159,20 +162,21 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 | `FILTER_IGNORE_DIRS` | filter.ignore_dirs | vendor,node_modules,mock,fixture | 解析流水线忽略的目录名（逗号分隔，路径任意层级命中即跳过文件，如第三方依赖/测试数据目录） |
 | `FILTER_IGNORE_FILE_REGEX` | filter.ignore_file_re | `_test\.go$` | 解析流水线忽略的文件正则（逗号分隔，匹配相对路径，如 Go 测试文件 `*_test.go`） |
 | `FILTER_ALLOW_EXTS` | filter.allow_exts | go,php | 解析流水线允许解析的代码文件后缀（逗号分隔，不含点；非业务代码后缀直接跳过） |
-| `REDIS_ADDR` | redis.addr | 空 | Redis 地址，如 `redis:6379`；**为空时不启用熔断/限流（fail-open）** |
-| `REDIS_HOST` | redis.addr | 空 | Redis 地址（host 形式，配合 `REDIS_PORT`，与 `REDIS_ADDR` 二选一） |
-| `REDIS_PORT` | redis.addr | 6379 | Redis 端口（配合 `REDIS_HOST`） |
-| `REDIS_PASSWORD` | redis.password | 空 | Redis 密码 |
-| `REDIS_DB` | redis.db | 0 | Redis 逻辑库编号 |
-| `DEEPSEEK_API_KEY` | —（model.yaml 占位符） | 空 | deepseek 模型密钥，对应 model.yaml 中 `api_key: "${DEEPSEEK_API_KEY}"` |
-| `DASHSCOPE_API_KEY` | —（model.yaml 占位符） | 空 | 阿里云百炼模型密钥，对应 model.yaml 中 `api_key: "${DASHSCOPE_API_KEY}"` |
 
 > 说明：
 > - `API_SECRET_KEY` 由 `internal/middleware` 直接读取，不经过 config.yaml。
 > - Docker Compose 中 Go 服务已注入 `DB_*`、`CHROMA_URL`、`LLM_SERVICE_URL`，生产部署请补充 `API_SECRET_KEY`。
-> - `llm.base_url` 仍用于 embedding 向量服务；**文本生成已改由 `config/model.yaml` 模型池调度**（`llm.provider/api_key/model` 为预留配置，当前版本未启用）。
 > - 向量引擎选择：默认 `chroma`；切换 Milvus 时设置 `VECTOR_DRIVER=milvus` 并配置 `MILVUS_*`，集合不存在会自动创建（FLAT 索引 + L2 距离）。初始化失败时向量同步/检索降级（跳过或返回"未配置"），不影响服务启动。
-> - 多模型调度：模型池、单价、rpm/tpm、熔断/限流参数见 `config/model.yaml`（修改后 5s 热重载，无需重启）；Redis 未配置或故障时熔断/限流降级 fail-open，不阻断业务。
+> - 多模型调度统一收口在 ai-wiki-llm（Python）：模型池、单价、rpm/tpm、熔断/限流参数见 `ai-wiki-llm/model_pool.yaml`（修改后约 5s 热重载，无需重启），密钥经环境变量注入（`DEEPSEEK_API_KEY` / `DASHSCOPE_API_KEY` 等）；Go 侧仅经 `LLM_SERVICE_URL` 调 `/api/chat` 并透传调度参数，**不再直连任何模型 API**。
+
+ai-wiki-llm 侧环境变量（Python 模型门面）：
+
+| 变量 | 说明 |
+| ---- | ---- |
+| `LLM_SERVICE_URL` / `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `LLM_MODEL` | 文档生成 / 变更摘要单模型（Go 不直接使用，走 ai-wiki-llm） |
+| `DEEPSEEK_API_KEY` / `DASHSCOPE_API_KEY` 等 | 多模型池密钥，对应 `model_pool.yaml` 中 `api_key: "${ENV}"` 占位 |
+| `MODEL_POOL_FILE` | 模型池配置文件路径（默认 `model_pool.yaml`） |
+| `REDIS_ADDR` / `REDIS_HOST`+`REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DB` | 多模型调度分布式熔断/限流状态存储（可选；未配置或故障时 fail-open，不阻断业务） |
 
 ## 4. API 简要说明
 
@@ -256,8 +260,8 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
 
 - **PHP 解析**：基于正则的简易实现，不做深度 AST，可能误匹配（注释/字符串规避已处理，匿名函数/泛型等特殊场景见 `pkg/astphp` 注释）。
 - **向量引擎**：默认 Chroma/Milvus 已实现（`VECTOR_DRIVER` 切换），Redis/Faiss 未实现。
-- **LLM 依赖**：文档生成、检索回答、需求分析均依赖外部大模型服务，未内置模型。RAG 检索/需求分析的文本生成支持多模型池调度（优先低价、故障自动降级，见 `internal/llm` 与 `config/model.yaml`）；文档生成仍走 `ai-wiki-llm` 微服务。
-- **Redis**：多模型调度的分布式熔断/限流状态存 Redis；未配置 `REDIS_ADDR` 或 Redis 故障时降级 fail-open（不阻断业务）。
+- **LLM 依赖**：文档生成、检索回答、需求分析均依赖外部大模型服务，未内置模型。所有「调模型」能力统一收口于 `ai-wiki-llm`（Python）；RAG 检索/需求分析的文本生成走 `/api/chat` 多模型调度（低价优先、故障自动降级，模型池见 `ai-wiki-llm/model_pool.yaml`），文档生成仍走 ai-wiki-llm 单模型。
+- **Redis**：多模型调度的分布式熔断/限流状态存 Redis（ai-wiki-llm 侧使用）；未配置或 Redis 故障时降级 fail-open（不阻断业务）。
 - **鉴权**：仅单密钥（`API_SECRET_KEY`），无 RBAC、无用户体系。
 - **任务队列**：已抽象 `pkg/taskqueue` 接口（`SubmitTask`/`ConsumeTask`），默认内存队列，生产可切换 RabbitMQ（`TASK_QUEUE_DRIVER=rabbitmq`）；消费失败自动重试，超过上限标记任务失败。
 - **日志**：仅控制台输出，文件输出已留扩展点（`logger.NewFileSink` / `logger.SetOutput`），未启用。
@@ -282,9 +286,9 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
    - 解析任务 / 向量更新任务统一投递到队列，由独立后台消费协程执行，失败自动重投（`retry_count` 记录），超过最大重试次数标记任务失败。
 6. **数据安全与备份**
    - 定期备份 MySQL 数据卷；开启 `restart: always` 保障自愈；健康检查失败会触发容器重启，需保证 MySQL/LLM 先行就绪（`depends_on: service_healthy`）。
-7. **多模型调度（RAG 问答/需求分析）**
-   - 在 `config/model.yaml` 配置模型池（单价、上下文、rpm/tpm、开关），密钥用 `${ENV}` 占位、经环境变量注入（如 `DEEPSEEK_API_KEY` / `DASHSCOPE_API_KEY`），禁止把真实密钥写入仓库；
-   - 建议配置 Redis（`REDIS_ADDR` 等）启用分布式熔断/限流；未配置时降级 fail-open，仅按顺序尝试各模型；
+7. **多模型调度（RAG 问答/需求分析，收口于 ai-wiki-llm）**
+   - 在 `ai-wiki-llm/model_pool.yaml` 配置模型池（单价、上下文、rpm/tpm、开关），密钥用 `${ENV}` 占位、经环境变量注入（如 `DEEPSEEK_API_KEY` / `DASHSCOPE_API_KEY`），禁止把真实密钥写入仓库；
+   - 给 ai-wiki-llm 注入 `REDIS_ADDR`（配合可选 redis 服务，见 docker-compose 注释）启用分布式熔断/限流；未配置时降级 fail-open，仅按顺序尝试各模型；
    - 调度策略：平均单价最低优先，可重试错误（429/5xx/超时/网络）自动降级下一档，连续 `circuit_failure_threshold` 次失败熔断 `circuit_ttl_sec` 秒后自动恢复；业务错误（400/上下文超限）不切换；
    - 请求级覆盖：`force_model` 强制指定、`force_high_quality` 仅走高配；埋点日志含 `used_model` / `switch_count` / `cost` 便于成本与降级监控。
 8. **日志与监控**
