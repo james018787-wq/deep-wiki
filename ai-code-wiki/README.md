@@ -179,6 +179,7 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | ---- | ---- |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL`（或 `LLM_MODEL`） | 文档生成 / 变更摘要单模型（openai 供应商） |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | 文档生成 / 变更摘要单模型（anthropic 供应商，`LLM_PROVIDER=anthropic`） |
+| `EMBEDDING_BASE_URL` / `EMBEDDING_API_KEY` / `EMBEDDING_MODEL` | 向量化（embedding）独立配置（与对话 LLM 解耦）。DeepSeek 不提供 embedding，默认指向硅基流动 `https://api.siliconflow.cn/v1` + `BAAI/bge-large-zh-v1.5` |
 | `DEEPSEEK_API_KEY` / `DASHSCOPE_API_KEY` 等 | 多模型池密钥，对应 `model_pool.yaml` 中 `api_key: "${ENV}"` 占位 |
 | `MODEL_POOL_FILE` | 模型池配置文件路径（默认 `model_pool.yaml`） |
 | `REDIS_ADDR` / `REDIS_HOST`+`REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DB` | 多模型调度分布式熔断/限流状态存储（可选；未配置或故障时 fail-open，不阻断业务） |

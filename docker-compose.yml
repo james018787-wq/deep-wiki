@@ -102,10 +102,14 @@ services:
       TZ: Asia/Shanghai
       CHROMA_URL: http://chroma:8000
       # 对话/文档生成：DeepSeek（OpenAI 兼容协议；密钥经 compose .env 注入 DEEPSEEK_API_KEY）
-      # 注意：向量化（embedding）无独立源时不可用，RAG 检索会降级
       OPENAI_API_KEY: "${DEEPSEEK_API_KEY}"
       OPENAI_BASE_URL: "https://api.deepseek.com/v1"
       LLM_MODEL: "deepseek-chat"
+      # 向量化（embedding）：独立供应商，对话与向量互不干扰
+      # DeepSeek 不提供 embedding，故单独指向硅基流动（OpenAI 兼容）
+      EMBEDDING_BASE_URL: "https://api.siliconflow.cn/v1"
+      EMBEDDING_API_KEY: "${SILICONFLOW_API_KEY}"
+      EMBEDDING_MODEL: "BAAI/bge-large-zh-v1.5"
       # 多模型调度（/api/chat）：模型池见 ai-wiki-llm/model_pool.yaml，密钥经环境变量注入
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY}"
       # DASHSCOPE_API_KEY: "your-dashscope-key"

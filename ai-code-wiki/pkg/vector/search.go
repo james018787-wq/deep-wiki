@@ -51,16 +51,17 @@ func EmbedText(baseURL, text string) ([]float64, error) {
 
 // QuerySimilar 通过 chroma HTTP 接口按向量检索，返回候选文档 doc_id 列表。
 //
-// chroma 查询接口：POST /api/v1/collections/{collection}/query
+// chroma 查询接口：POST /api/v1/collections/{collectionID}/query
 // 约定：向量记录 id 即 code_function_doc.doc_id（字符串形式）。
-func QuerySimilar(chromaBaseURL, collection string, queryVector []float64, limit int) ([]int64, error) {
-	if chromaBaseURL == "" || collection == "" {
+// collectionID 为集合 UUID（Chroma 0.5.x 起 REST API 按 UUID 寻址，由调用方解析）。
+func QuerySimilar(chromaBaseURL, collectionID string, queryVector []float64, limit int) ([]int64, error) {
+	if chromaBaseURL == "" || collectionID == "" {
 		return nil, fmt.Errorf("向量库地址或集合未配置")
 	}
 	if len(queryVector) == 0 {
 		return nil, fmt.Errorf("查询向量为空")
 	}
-	apiURL := strings.TrimRight(chromaBaseURL, "/") + "/api/v1/collections/" + url.PathEscape(collection) + "/query"
+	apiURL := strings.TrimRight(chromaBaseURL, "/") + "/api/v1/collections/" + url.PathEscape(collectionID) + "/query"
 
 	body, err := json.Marshal(map[string]any{
 		"query_embeddings": [][]float64{queryVector},
@@ -104,6 +105,24 @@ func httpPost(apiURL string, body []byte, timeout time.Duration) (*http.Response
 		return nil, fmt.Errorf("构建请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求失败: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("服务返回异常状态码: %d", resp.StatusCode)
+	}
+	return resp, nil
+}
+
+// httpGet 通用 GET 请求，带超时。
+func httpGet(apiURL string, timeout time.Duration) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("构建请求失败: %w", err)
+	}
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
 	if err != nil {

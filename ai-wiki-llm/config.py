@@ -31,6 +31,20 @@ class LLMConfig:
     llm_retry_wait: float = float(os.getenv("LLM_RETRY_WAIT", "1.0"))
 
 
+class EmbeddingConfig:
+    """向量化（embedding）配置：独立于对话 LLM。
+
+    对话走 DeepSeek 等，而 DeepSeek 不提供 embedding，故此处单独配置
+    一家 OpenAI 兼容协议的 embedding 供应商（如硅基流动 SiliconFlow）。
+    """
+
+    # OpenAI 兼容端点（硅基流动: https://api.siliconflow.cn/v1）
+    base_url: str = os.getenv("EMBEDDING_BASE_URL", "https://api.siliconflow.cn/v1")
+    api_key: str = os.getenv("EMBEDDING_API_KEY", "")
+    # 模型名（硅基流动: BAAI/bge-large-zh-v1.5，维度 1024）
+    model: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")
+
+
 class VectorConfig:
     """向量库配置：当前使用 Chroma，预留 Milvus 切换能力"""
 
@@ -79,6 +93,7 @@ class Settings:
     """全局配置聚合"""
 
     llm: LLMConfig = LLMConfig()
+    embedding: EmbeddingConfig = EmbeddingConfig()
     vector: VectorConfig = VectorConfig()
     redis: RedisConfig = RedisConfig()
     model_pool: ModelPoolConfig = ModelPoolConfig()
