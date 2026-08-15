@@ -24,6 +24,7 @@ WORKDIR /app
 # 拷贝二进制与配置文件
 COPY --from=builder /app/ai-code-wiki .
 COPY --from=builder /app/config/config.yaml ./config/config.yaml
+COPY --from=builder /app/config/model.yaml ./config/model.yaml
 # 极简前端静态页面（Vue3 CDN，无构建），由 gin /webstatic 挂载
 COPY --from=builder /app/webstatic ./webstatic
 

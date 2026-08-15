@@ -3,36 +3,45 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
 
 	"ai-code-wiki/internal/config"
+	"ai-code-wiki/internal/llm"
 	"ai-code-wiki/internal/model"
 	"ai-code-wiki/pkg/common"
-	"ai-code-wiki/pkg/llm"
+	"ai-code-wiki/pkg/logger"
 )
 
 // RequirementService 新产品需求分析业务逻辑。
 type RequirementService struct {
-	search      *SearchService // 复用已有 RAG 检索流水线
-	llmBaseURL  string         // Python LLM 服务地址
+	search      llmSearch      // 复用已有 RAG 检索流水线
+	scheduler   *llm.Scheduler // 多模型调度器（优先低价，失败自动降级）
 	chatTimeout time.Duration  // 需求分析 LLM 调用超时（LLM_TIMEOUT，默认 60s）
 }
 
+// llmSearch 检索服务接口（供 RequirementService 复用 RAG 检索流水线）。
+type llmSearch interface {
+	RetrieveRelatedDocs(ctx context.Context, query string) ([]*model.CodeFunctionDoc, error)
+}
+
 // NewRequirementService 构建需求分析服务。
-func NewRequirementService(search *SearchService, cfg *config.Config) *RequirementService {
+func NewRequirementService(search *SearchService, cfg *config.Config, scheduler *llm.Scheduler) *RequirementService {
 	return &RequirementService{
 		search:      search,
-		llmBaseURL:  cfg.LLM.BaseURL,
+		scheduler:   scheduler,
 		chatTimeout: llmCallTimeout(cfg.LLM.Timeout, defaultLLMTimeoutSec),
 	}
 }
 
 // AnalyzeReq 新产品需求分析入参。
 type AnalyzeReq struct {
-	Requirement string `json:"user_requirement" binding:"required"` // 用户业务需求文本
+	Requirement      string `json:"user_requirement" binding:"required"` // 用户业务需求文本
+	ForceModel       string `json:"force_model"`                         // 可选：强制指定模型（不降级/不熔断/不限流）
+	ForceHighQuality bool   `json:"force_high_quality"`                  // 可选：仅用高配模型（过滤低价模型）
 }
 
 // RelatedFunction 需求涉及的函数文档。
@@ -51,6 +60,9 @@ type AnalyzeResult struct {
 	RiskPoints       []string          `json:"risk_points"`       // 潜在风险点
 	Suggestion       string            `json:"suggestion"`        // 开发建议
 	KnowledgeMissing bool              `json:"knowledge_missing"` // 知识库是否缺少对应资料
+	UsedModel        string            `json:"used_model"`        // 实际使用的模型
+	SwitchCount      int               `json:"switch_count"`      // 实际降级切换次数
+	Cost             float64           `json:"cost"`              // 本次调用估算成本（元）
 }
 
 // Analyze 需求分析主流程。
@@ -63,10 +75,10 @@ type AnalyzeResult struct {
 //  5. 返回分析结果（含引用函数来源）。
 //
 // 约束：
-//  - 复用已有检索逻辑，禁止另写一套；
-//  - 严格要求 LLM 返回 JSON，解析做好容错；
-//  - 未检索到相关文档时仍返回结果，提示知识库缺少对应资料；
-//  - LLM 调用带超时控制，上游异常返回友好提示。
+//   - 复用已有检索逻辑，禁止另写一套；
+//   - 严格要求 LLM 返回 JSON，解析做好容错；
+//   - 未检索到相关文档时仍返回结果，提示知识库缺少对应资料；
+//   - LLM 调用带超时控制，上游异常返回友好提示。
 func (s *RequirementService) Analyze(ctx context.Context, req *AnalyzeReq) (*AnalyzeResult, error) {
 	// 防御：调用方未传 context 时使用 Background
 	if ctx == nil {
@@ -86,7 +98,7 @@ func (s *RequirementService) Analyze(ctx context.Context, req *AnalyzeReq) (*Ana
 	}
 
 	// step3: 把检索出的函数文档作为上下文，构造 Prompt 要求输出结构化 JSON
-	if s.llmBaseURL == "" {
+	if s.scheduler == nil {
 		return nil, common.NewError(common.CodeInvalidState, "AI 服务未配置")
 	}
 	system := "你是一名资深研发需求分析师。请根据用户业务需求与检索到的代码知识库文档，输出开发分析结果。\n" +
@@ -97,19 +109,39 @@ func (s *RequirementService) Analyze(ctx context.Context, req *AnalyzeReq) (*Ana
 
 	user := buildRequirementUserPrompt(requirement, docs)
 
-	// step4: 调用 LLM，带超时控制
+	// step4: 经多模型调度器调用 LLM（优先低价，失败自动降级），带超时控制
+	opt := llm.SchedulerOption{
+		ForceModel:        req.ForceModel,
+		ForceHighQuality:  req.ForceHighQuality,
+		EstimatedTokenLen: llm.EstimateTokens(user),
+	}
 	ctx, cancel := context.WithTimeout(ctx, s.chatTimeout)
 	defer cancel()
-	raw, err := llm.Chat(ctx, s.llmBaseURL, system, user)
+	sched, err := s.scheduler.Chat(ctx, system, user, opt)
 	if err != nil {
+		if errors.Is(err, llm.ErrAllFailed) {
+			return nil, common.WrapError(common.CodeUpstreamError, "所有模型服务暂时不可用，请稍后重试", err)
+		}
+		if errors.Is(err, llm.ErrNoModel) {
+			return nil, common.WrapError(common.CodeInvalidState, "AI 模型池未配置，请检查 model.yaml", err)
+		}
 		return nil, common.WrapError(common.CodeUpstreamError, "AI 服务暂时不可用，请稍后重试", err)
 	}
+	raw := sched.Content
+
+	logger.Info(ctx, "[requirement] 分析生成完成 used_model=%s switch_count=%d force_model=%s force_high_quality=%t estimated_context_token=%d input_token=%d output_token=%d cost=%.6f retried_model_list=%v",
+		sched.UsedModelName, sched.SwitchedCount, opt.ForceModel, opt.ForceHighQuality,
+		opt.EstimatedTokenLen, sched.TokenInput, sched.TokenOutput, sched.Cost, sched.RetriedModels)
 
 	// 解析 LLM 输出 JSON（容错处理）
 	parsed, parseErr := parseAnalyzeJSON(raw)
 	if parseErr != nil {
 		// 解析失败：降级为基于真实召回文档的兜底结果，保证接口始终有返回
-		return fallbackAnalyzeResult(docs), nil
+		fb := fallbackAnalyzeResult(docs)
+		fb.UsedModel = sched.UsedModelName
+		fb.SwitchCount = sched.SwitchedCount
+		fb.Cost = sched.Cost
+		return fb, nil
 	}
 
 	// 空值归一：LLM 可能返回 null/缺失数组字段，统一转为空数组，保证 JSON 输出结构稳定
@@ -127,6 +159,9 @@ func (s *RequirementService) Analyze(ctx context.Context, req *AnalyzeReq) (*Ana
 		RiskPoints:       parsed.RiskPoints,
 		Suggestion:       parsed.Suggestion,
 		KnowledgeMissing: len(docs) == 0,
+		UsedModel:        sched.UsedModelName,
+		SwitchCount:      sched.SwitchedCount,
+		Cost:             sched.Cost,
 	}
 
 	// 没有检索到相关文档：提示知识库缺少对应资料

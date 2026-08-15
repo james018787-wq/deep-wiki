@@ -1,0 +1,47 @@
+# 多模型池配置（热重载：修改后无需重启服务）
+# 调度规则：优先低价（按 (input_price+output_price)/2 升序），失败自动降级切换下一档；
+# 支持请求级覆盖：force_model 强制指定模型、force_high_quality 仅用高配模型。
+#
+# 密钥安全：api_key 使用 ${ENV_VAR} 占位符，加载时从环境变量替换，密钥不入库。
+# 如 DEEPSEEK_API_KEY、DASHSCOPE_API_KEY。
+model_pool:
+  - name: deepseek-chat
+    provider: deepseek
+    api_key: "${DEEPSEEK_API_KEY}"
+    base_url: "https://api.deepseek.com/v1"
+    input_price: 0.001  # 元/1k tokens
+    output_price: 0.002
+    max_context: 64000
+    rpm: 60
+    tpm: 100000
+    enable: true
+
+  - name: qwen-turbo
+    provider: aliyun
+    api_key: "${DASHSCOPE_API_KEY}"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    input_price: 0.0003
+    output_price: 0.0006
+    max_context: 100000
+    rpm: 60
+    tpm: 100000
+    enable: true
+
+  - name: qwen-plus
+    provider: aliyun
+    api_key: "${DASHSCOPE_API_KEY}"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    input_price: 0.0008
+    output_price: 0.002
+    max_context: 100000
+    rpm: 30
+    tpm: 50000
+    enable: true
+
+# 全局调度参数（缺省时使用默认值，见 internal/llm/model_config.go）
+global:
+  max_retry_switch: 2              # 最多降级切换次数（3 个模型场景下最多尝试 3 家）
+  circuit_ttl_sec: 30              # 熔断时长（秒），到期自动恢复
+  circuit_failure_threshold: 3     # 连续失败 N 次触发熔断
+  ratelimit_window_sec: 60         # RPM/TPM 限流滑动窗口（秒）
+  high_quality_price_threshold: 0.2 # force_high_quality 时过滤平均单价低于该值的低价模型

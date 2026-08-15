@@ -2,6 +2,7 @@
 package config
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"strconv"
@@ -19,6 +20,7 @@ type Config struct {
 	TaskQueue TaskQueueConfig `yaml:"task_queue"`
 	Filter    FilterConfig    `yaml:"filter"`
 	LLM       LLMConfig       `yaml:"llm"`
+	Redis     RedisConfig     `yaml:"redis"`
 }
 
 // ServerConfig 服务运行配置。
@@ -73,6 +75,13 @@ type TaskQueueConfig struct {
 	QueueName   string `yaml:"queue_name"`   // 队列名（TASK_QUEUE_NAME，默认 ai-code-wiki-task）
 	MaxRetry    int    `yaml:"max_retry"`    // 任务最大重试次数（TASK_QUEUE_MAX_RETRY，默认 3）
 	Concurrency int    `yaml:"concurrency"`  // 消费协程数（TASK_QUEUE_CONCURRENCY，默认 2）
+}
+
+// RedisConfig Redis 配置（多模型调度的分布式熔断/限流状态存储）。
+type RedisConfig struct {
+	Addr     string `yaml:"addr"` // 如 redis:6379；为空则不启用熔断/限流（fail-open）
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
 }
 
 // LLMConfig 大模型配置。
@@ -159,6 +168,15 @@ func (c *Config) ApplyEnv() {
 	c.Git.RepoURL = envStr("GIT_REPO_URL", c.Git.RepoURL)
 	c.Git.CloneDir = envStr("GIT_CLONE_DIR", c.Git.CloneDir)
 	c.Git.DefaultBranch = envStr("GIT_DEFAULT_BRANCH", c.Git.DefaultBranch)
+
+	// Redis（多模型调度的分布式熔断/限流状态；REDIS_ADDR 或 REDIS_HOST+REDIS_PORT）
+	if v := envStr("REDIS_ADDR", ""); v != "" {
+		c.Redis.Addr = v
+	} else if host := envStr("REDIS_HOST", ""); host != "" {
+		c.Redis.Addr = fmt.Sprintf("%s:%d", host, envInt("REDIS_PORT", 6379))
+	}
+	c.Redis.Password = envStr("REDIS_PASSWORD", c.Redis.Password)
+	c.Redis.DB = envInt("REDIS_DB", c.Redis.DB)
 }
 
 // envStr 读取字符串环境变量，为空时返回默认值。

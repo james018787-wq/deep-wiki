@@ -10,10 +10,11 @@ import (
 	"time"
 
 	"ai-code-wiki/internal/config"
+	"ai-code-wiki/internal/llm"
 	"ai-code-wiki/internal/model"
 	"ai-code-wiki/internal/repo"
 	"ai-code-wiki/pkg/common"
-	"ai-code-wiki/pkg/llm"
+	"ai-code-wiki/pkg/logger"
 	"ai-code-wiki/pkg/vector"
 
 	"gorm.io/gorm"
@@ -35,10 +36,11 @@ type SearchService struct {
 	llmBaseURL   string              // Python LLM 微服务地址（用于 embedding 与回答生成）
 	chatTimeout  time.Duration       // 回答生成 LLM 调用超时（LLM_TIMEOUT，默认 60s）
 	vc           vector.VectorClient // 向量存储抽象（业务不感知 chroma/milvus）
+	scheduler    *llm.Scheduler      // 多模型调度器（优先低价，失败自动降级）
 }
 
 // NewSearchService 构建检索服务。
-func NewSearchService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient) *SearchService {
+func NewSearchService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient, scheduler *llm.Scheduler) *SearchService {
 	return &SearchService{
 		db:           db,
 		docRepo:      newDocRepo(db),
@@ -46,13 +48,16 @@ func NewSearchService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient) *
 		llmBaseURL:   cfg.LLM.BaseURL,
 		chatTimeout:  llmCallTimeout(cfg.LLM.Timeout, defaultLLMTimeoutSec),
 		vc:           vc,
+		scheduler:    scheduler,
 	}
 }
 
 // SearchReq 自然语言查询入参。
 type SearchReq struct {
-	Query  string `json:"query" binding:"required"` // 自然语言查询
-	Module string `json:"module"`                   // 可选的模块过滤（保留兼容）
+	Query            string `json:"query" binding:"required"` // 自然语言查询
+	Module           string `json:"module"`                   // 可选的模块过滤（保留兼容）
+	ForceModel       string `json:"force_model"`              // 可选：强制指定模型（不降级/不熔断/不限流）
+	ForceHighQuality bool   `json:"force_high_quality"`       // 可选：仅用高配模型（过滤低价模型）
 }
 
 // ReferenceDoc 引用文档来源。
@@ -65,8 +70,11 @@ type ReferenceDoc struct {
 
 // SearchResult 检索回答结果。
 type SearchResult struct {
-	Answer        string          `json:"answer"`          // LLM 回答
-	ReferenceList []ReferenceDoc  `json:"reference_list"`  // 引用文档来源列表
+	Answer        string         `json:"answer"`         // LLM 回答
+	ReferenceList []ReferenceDoc `json:"reference_list"` // 引用文档来源列表
+	UsedModel     string         `json:"used_model"`     // 实际使用的模型（调度器返回）
+	SwitchCount   int            `json:"switch_count"`   // 实际降级切换次数
+	Cost          float64        `json:"cost"`           // 本次调用估算成本（元）
 }
 
 // Search 跨模块 RAG 检索主流程。
@@ -74,7 +82,7 @@ type SearchResult struct {
 // 流水线顺序【严格不可调换】：
 //  1. 接收用户 query；
 //  2. 调用 Python LLM 服务向量接口将 query 转为向量，经向量抽象接口
-//    （chroma/milvus 之一）查询得到候选 doc_id 列表；
+//     （chroma/milvus 之一）查询得到候选 doc_id 列表；
 //  3. 根据 doc_id 从 MySQL 读取 CodeFunctionDoc 候选文档；
 //  4. 读取 module_relation 表，合并 AST 自动识别 + 人工新增 的模块依赖关系；
 //  5. 根据候选文档所属模块，扩充召回关联模块下文档，实现跨模块召回；
@@ -99,15 +107,27 @@ func (s *SearchService) Search(ctx context.Context, req *SearchReq) (*SearchResu
 	// step6: 上下文截断与组装
 	contextPrompt := buildContextPrompt(recalled)
 
-	// step7: 调用 LLM 生成回答
-	answer, err := s.askLLM(ctx, query, contextPrompt)
+	// step7: 多模型调度生成回答（优先低价，失败自动降级）
+	opt := llm.SchedulerOption{
+		ForceModel:        req.ForceModel,
+		ForceHighQuality:  req.ForceHighQuality,
+		EstimatedTokenLen: llm.EstimateTokens(contextPrompt + query),
+	}
+	sched, err := s.askLLM(ctx, query, contextPrompt, opt)
 	if err != nil {
 		return nil, err
 	}
 
+	logger.Info(ctx, "[search] 回答生成完成 query=%s used_model=%s switch_count=%d force_model=%s force_high_quality=%t estimated_context_token=%d input_token=%d output_token=%d cost=%.6f retried_model_list=%v",
+		query, sched.UsedModelName, sched.SwitchedCount, opt.ForceModel, opt.ForceHighQuality,
+		opt.EstimatedTokenLen, sched.TokenInput, sched.TokenOutput, sched.Cost, sched.RetriedModels)
+
 	return &SearchResult{
-		Answer:        answer,
+		Answer:        sched.Content,
 		ReferenceList: toReferenceList(recalled),
+		UsedModel:     sched.UsedModelName,
+		SwitchCount:   sched.SwitchedCount,
+		Cost:          sched.Cost,
 	}, nil
 }
 
@@ -191,9 +211,9 @@ func (s *SearchService) loadDocs(ctx context.Context, ids []int64) ([]*model.Cod
 // expandRecall 读取模块依赖并跨模块扩充召回。
 //
 // 业务规则：
-//  - 模块依赖查询 = AST 自动识别(source=1) UNION 人工添加(source=2)，
-//    查询时不过滤 source 字段，人工新增依赖不会被丢弃。
-//  - 跨模块扩充在 MySQL 层完成（非向量层）。
+//   - 模块依赖查询 = AST 自动识别(source=1) UNION 人工添加(source=2)，
+//     查询时不过滤 source 字段，人工新增依赖不会被丢弃。
+//   - 跨模块扩充在 MySQL 层完成（非向量层）。
 func (s *SearchService) expandRecall(ctx context.Context, candidates []*model.CodeFunctionDoc) ([]*model.CodeFunctionDoc, error) {
 	_ = ctx
 
@@ -252,10 +272,10 @@ func (s *SearchService) expandRecall(ctx context.Context, candidates []*model.Co
 	return append(candidates, relatedDocs...), nil
 }
 
-// askLLM 调用 LLM 生成回答（带显式超时，避免上游异常拖垮接口）。
-func (s *SearchService) askLLM(ctx context.Context, query, contextPrompt string) (string, error) {
-	if s.llmBaseURL == "" {
-		return "", common.NewError(common.CodeInvalidState, "AI 服务未配置")
+// askLLM 经多模型调度器调用 LLM 生成回答（带显式超时，避免上游异常拖垮接口）。
+func (s *SearchService) askLLM(ctx context.Context, query, contextPrompt string, opt llm.SchedulerOption) (*llm.SchedulerResult, error) {
+	if s.scheduler == nil {
+		return nil, common.NewError(common.CodeInvalidState, "AI 服务未配置")
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.chatTimeout)
 	defer cancel()
@@ -264,11 +284,17 @@ func (s *SearchService) askLLM(ctx context.Context, query, contextPrompt string)
 		"如果文档信息不足以回答，请如实说明，不要编造。"
 	user := contextPrompt + "\n\n用户问题: " + query + "\n请基于以上文档作答。"
 
-	answer, err := llm.Chat(ctx, s.llmBaseURL, system, user)
+	sched, err := s.scheduler.Chat(ctx, system, user, opt)
 	if err != nil {
-		return "", common.WrapError(common.CodeUpstreamError, "AI 服务暂时不可用，请稍后重试", err)
+		if errors.Is(err, llm.ErrAllFailed) {
+			return nil, common.WrapError(common.CodeUpstreamError, "所有模型服务暂时不可用，请稍后重试", err)
+		}
+		if errors.Is(err, llm.ErrNoModel) {
+			return nil, common.WrapError(common.CodeInvalidState, "AI 模型池未配置，请检查 model.yaml", err)
+		}
+		return nil, common.WrapError(common.CodeUpstreamError, "AI 服务暂时不可用，请稍后重试", err)
 	}
-	return answer, nil
+	return sched, nil
 }
 
 // buildContextPrompt 上下文截断与组装。

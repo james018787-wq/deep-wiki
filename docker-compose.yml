@@ -128,3 +128,21 @@ services:
   #     interval: 10s
   #     timeout: 5s
   #     retries: 5
+
+  # 可选：多模型调度分布式熔断/限流状态存储（redis）
+  # 需在 ai-code-wiki-api 环境变量中配置 REDIS_ADDR=redis:6379；不启用时熔断/限流降级 fail-open
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: ai-code-wiki-redis
+  #   restart: always
+  #   ports:
+  #     - "6379:6379"
+  #   environment:
+  #     TZ: Asia/Shanghai
+  #   volumes:
+  #     - ./data/redis:/data
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
