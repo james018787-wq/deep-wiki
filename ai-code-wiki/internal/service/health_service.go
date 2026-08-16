@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"ai-code-wiki/pkg/version"
 )
 
 // 健康检查常量。
@@ -20,6 +22,7 @@ const healthProbeTimeout = 3 * time.Second
 
 // HealthStatus 健康检查结果。
 type HealthStatus struct {
+	Version    string `json:"version"`     // 服务版本号
 	MySQL      string `json:"mysql"`       // 数据库连通性：ok / fail
 	LLMService string `json:"llm_service"` // LLM 服务连通性：ok / fail
 	Status     string `json:"status"`      // 服务运行状态：running
@@ -31,7 +34,7 @@ func (s *Service) CheckHealth(ctx context.Context) HealthStatus {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	status := HealthStatus{MySQL: HealthOK, LLMService: HealthOK, Status: "running"}
+	status := HealthStatus{Version: version.Version, MySQL: HealthOK, LLMService: HealthOK, Status: "running"}
 	if err := s.pingMySQL(ctx); err != nil {
 		status.MySQL = HealthFail
 	}

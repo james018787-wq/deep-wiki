@@ -11,6 +11,7 @@
 ![MySQL](https://img.shields.io/badge/MySQL-8-4479a1?logo=mysql)
 ![Chroma](https://img.shields.io/badge/Vector-Chroma/Milvus-9b59b6)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ed?logo=docker)
+![Version](https://img.shields.io/badge/version-0.1.6-4dabf7)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 </div>
