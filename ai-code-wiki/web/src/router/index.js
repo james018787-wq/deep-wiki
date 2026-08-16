@@ -9,6 +9,7 @@ import Tasks from '../views/Tasks.vue'
 import Repos from '../views/Repos.vue'
 import DocEdit from '../views/DocEdit.vue'
 import DocHistory from '../views/DocHistory.vue'
+import DocSource from '../views/DocSource.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -22,6 +23,7 @@ const router = createRouter({
     { path: '/repos', name: 'repos', component: Repos },
     { path: '/doc-edit/:id', name: 'doc-edit', component: DocEdit },
     { path: '/doc-history/:id', name: 'doc-history', component: DocHistory },
+    { path: '/doc-source/:id', name: 'doc-source', component: DocSource },
     { path: '/:pathMatch(.*)*', redirect: '/docs' }
   ]
 })

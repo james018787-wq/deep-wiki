@@ -1,5 +1,13 @@
 <template>
   <div class="container">
+    <div class="stats" v-if="stats">
+      <div class="stat"><b>{{ stats.total_doc_count }}</b><span>总文档</span></div>
+      <div class="stat"><b>{{ stats.module_count }}</b><span>业务模块</span></div>
+      <div class="stat"><b>{{ stats.auto_doc_count }}</b><span>AI 自动生成</span></div>
+      <div class="stat"><b>{{ stats.manual_doc_count }}</b><span>人工校正</span></div>
+      <div class="stat warn" v-if="stats.pending_review_count > 0"><b>{{ stats.pending_review_count }}</b><span>待复核</span></div>
+    </div>
+
     <div class="toolbar">
       <label>仓库：</label>
       <select v-model="repoId" @change="onRepoChange">
@@ -23,6 +31,7 @@
           <th>摘要</th>
           <th>来源</th>
           <th>更新时间</th>
+          <th>操作</th>
         </tr>
       </thead>
       <tbody>
@@ -34,9 +43,10 @@
           <td>{{ d.summary }}</td>
           <td><span class="tag" :class="d.content_source === 2 ? 'manual' : 'ai'">{{ d.content_source === 2 ? '人工校正' : 'AI生成' }}</span></td>
           <td>{{ formatTime(d.update_time) }}</td>
+          <td><a class="link" href="javascript:void(0)" @click.stop="viewSource(d.id)">查看源码</a></td>
         </tr>
         <tr v-if="!loading && list.length === 0">
-          <td colspan="7" class="empty">暂无文档</td>
+          <td colspan="8" class="empty">暂无文档</td>
         </tr>
       </tbody>
     </table>
@@ -70,6 +80,7 @@ const total = ref(0)
 const totalPages = ref(1)
 const loading = ref(false)
 const error = ref('')
+const stats = ref(null)
 
 const enabledRepos2 = computed(() => enabledRepos(repos.value))
 
@@ -112,11 +123,22 @@ function goDetail(id) {
   router.push('/doc-edit/' + id)
 }
 
+function viewSource(id) {
+  window.open('/doc-source/' + id, '_blank')
+}
+
 function formatTime(t) {
   return t ? String(t).replace('T', ' ').slice(0, 19) : '-'
 }
 
+async function loadStats() {
+  try {
+    stats.value = await apiRequest('/report/basic')
+  } catch (e) { /* 统计失败不阻塞列表 */ }
+}
+
 onMounted(async () => {
+  loadStats()
   await initRepos()
   loadModules()
   load(1)

@@ -213,6 +213,7 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | GET | `/api/v1/doc/module/list` | 获取所有业务模块 |
 | GET | `/api/v1/doc/list?module=xxx&page=1&page_size=20` | 分页查询函数文档列表（前端列表页使用） |
 | GET | `/api/v1/doc/:doc_id` | 获取文档详情 |
+| GET | `/api/v1/doc/:doc_id/source` | 读取文档对应源码文件内容（查看源码，基于仓库克隆目录工作区，缺失时自动拉取默认分支） |
 | PUT | `/api/v1/doc/:doc_id/edit` | 人工校正文档（记录修改前后快照） |
 | POST | `/api/v1/doc/:doc_id/reset` | 重置为原始 AI 版本 |
 | GET | `/api/v1/doc/modified/list?page=1&page_size=20` | 人工校正文档列表 |
@@ -243,6 +244,7 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | `/chat` | 智能问答 | 多轮对话 + 会话列表/新建；可切换「需求分析」模式，粘贴产品修订/需求文档直接得到开发设计建议 |
 | `/impact` | 迭代影响分析 | 分支/自然语言/函数 → 上游/下游影响点三栏 + 开发设计文档初稿 + 逐函数个性化变更记录 |
 | `/doc-edit/:id` | 文档编辑/详情 | 加载现有文档，`PUT /api/v1/doc/:doc_id/edit` 提交、支持重置，可进入历史版本页 |
+| `/doc-source/:id` | 源码查看 | 新窗口展示文档对应源码文件（行号），支持从列表/编辑页「查看源码」进入 |
 | `/doc-history/:id` | 文档历史版本 | 历史列表 + 快照详情，查看修改前后原始 JSON |
 | `/tasks` | 任务管理 | 任务列表 / 状态查询 / 触发解析任务 |
 | `/repos` | 仓库管理 | 注册 / 启停代码仓库 |

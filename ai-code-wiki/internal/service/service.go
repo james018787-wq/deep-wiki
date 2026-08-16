@@ -93,7 +93,7 @@ func NewService(db *gorm.DB, cfg *config.Config) (*Service, error) {
 		llmBaseURL:  cfg.LLM.BaseURL,
 		Task:        taskSvc,
 		TaskQuery:   NewTaskQueryService(db),
-		Doc:         NewDocService(db, vc, queue),
+		Doc:         NewDocService(db, vc, queue, &cfg.Git),
 		Search:      searchSvc,
 		Relation:    NewRelationService(db),
 		Requirement: NewRequirementService(searchSvc, cfg),

@@ -95,6 +95,27 @@ nav a.logout:hover { color: var(--red); background: rgba(248, 113, 113, 0.1); }
 /* ============ 布局容器 ============ */
 .container { max-width: 1200px; margin: 20px auto; padding: 0 16px; }
 
+/* ============ 统计概览条 ============ */
+.stats { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.stat {
+  flex: 1; min-width: 120px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 18px;
+  text-align: center;
+  backdrop-filter: blur(10px);
+}
+.stat b {
+  display: block; font-size: 26px; font-family: var(--mono); font-weight: 800;
+  background: linear-gradient(90deg, var(--cyan), var(--violet));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.stat span { font-size: 12px; color: var(--text-dim); letter-spacing: 1px; }
+.stat.warn b { background: linear-gradient(90deg, var(--amber), var(--red));
+  -webkit-background-clip: text; background-clip: text; color: transparent; }
+.stat.warn { border-color: rgba(251, 191, 36, 0.35); }
+
 /* ============ 玻璃卡片 ============ */
 .panel, .detail, .side, .main {
   background: var(--panel);

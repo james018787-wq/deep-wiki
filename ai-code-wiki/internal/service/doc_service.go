@@ -7,9 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"ai-code-wiki/internal/config"
 	"ai-code-wiki/internal/model"
 	"ai-code-wiki/internal/repo"
 	"ai-code-wiki/pkg/common"
+	"ai-code-wiki/pkg/git"
 	"ai-code-wiki/pkg/logger"
 	"ai-code-wiki/pkg/taskqueue"
 	"ai-code-wiki/pkg/vector"
@@ -28,11 +30,12 @@ type DocService struct {
 	repoRepo   *repo.CodeRepoRepo // 代码仓库注册表（解析仓库名用于向量元数据）
 	vc         vector.VectorClient // 向量存储抽象（业务不感知 chroma/milvus）
 	queue      taskqueue.TaskQueue // 异步任务队列（提交入口，消费由独立 Worker 完成）
+	gitCfg     *config.GitConfig   // git 克隆目录根配置（每个仓库独立子目录）
 }
 
 // NewDocService 构建文档服务。
 // vc 为 nil 时跳过向量同步（向量引擎未配置/初始化失败场景）。
-func NewDocService(db *gorm.DB, vc vector.VectorClient, queue taskqueue.TaskQueue) *DocService {
+func NewDocService(db *gorm.DB, vc vector.VectorClient, queue taskqueue.TaskQueue, gitCfg *config.GitConfig) *DocService {
 	return &DocService{
 		db:         db,
 		docRepo:    newDocRepo(db),
@@ -42,6 +45,7 @@ func NewDocService(db *gorm.DB, vc vector.VectorClient, queue taskqueue.TaskQueu
 		repoRepo:   repo.NewCodeRepoRepo(db),
 		vc:         vc,
 		queue:      queue,
+		gitCfg:     gitCfg,
 	}
 }
 
@@ -80,15 +84,69 @@ func (s *DocService) GetDoc(ctx context.Context, docID int64) (*model.CodeFuncti
 	return doc, nil
 }
 
+// DocSourceResult 文档对应源码返回结构。
+type DocSourceResult struct {
+	RepoID     int64  `json:"repo_id"`
+	RepoName   string `json:"repo_name"`
+	FilePath   string `json:"file_path"`
+	FuncName   string `json:"func_name"`
+	ModuleName string `json:"module_name"`
+	Branch     string `json:"branch"`
+	Content    string `json:"content"`
+}
+
+// GetSource 读取文档对应源码文件内容（基于仓库克隆目录工作区）。
+// 优先直接读取；文件不存在（克隆不完整/切换分支）时拉取默认分支后重试。
+func (s *DocService) GetSource(ctx context.Context, docID int64) (*DocSourceResult, error) {
+	doc, err := s.docRepo.GetByID(docID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, common.NewError(common.CodeNotFound, "文档不存在")
+		}
+		return nil, common.WrapError(common.CodeInternalError, "查询文档失败", err)
+	}
+
+	repoInfo, err := s.repoRepo.GetByID(doc.RepoID)
+	if err != nil {
+		return nil, common.WrapError(common.CodeInternalError, "查询仓库失败", err)
+	}
+	if repoInfo == nil {
+		return nil, common.NewError(common.CodeNotFound, "仓库不存在")
+	}
+
+	cloneDir := strings.TrimRight(s.gitCfg.CloneDir, "/") + "/" + repoInfo.RepoName
+	content, err := git.ReadFile(cloneDir, doc.FilePath)
+	if err != nil {
+		// 克隆缺失或工作区在旧分支：拉取默认分支后重试一次
+		if pullErr := git.CloneOrPull(repoInfo.RepoURL, repoInfo.DefaultBranch, cloneDir); pullErr != nil {
+			return nil, common.NewError(common.CodeInternalError, "读取源码失败且无法拉取仓库: "+err.Error()+"; "+pullErr.Error())
+		}
+		content, err = git.ReadFile(cloneDir, doc.FilePath)
+		if err != nil {
+			return nil, common.NewError(common.CodeNotFound, "源码文件中不存在: "+err.Error())
+		}
+	}
+
+	_ = ctx
+	return &DocSourceResult{
+		RepoID:     doc.RepoID,
+		RepoName:   repoInfo.RepoName,
+		FilePath:   doc.FilePath,
+		FuncName:   doc.FuncName,
+		ModuleName: doc.ModuleName,
+		Branch:     repoInfo.DefaultBranch,
+		Content:    content,
+	}, nil
+}
+
 // EditDocReq 人工校正文档入参。
 type EditDocReq struct {
-	Summary     string `json:"summary"`                     // 业务摘要
-	InputDesc   string `json:"input_desc"`                  // 入参说明
-	OutputDesc  string `json:"output_desc"`                 // 返回值说明
-	ProcessFlow string `json:"process_flow"`                // 业务执行流程
-	RiskPoint   string `json:"risk_point"`                  // 业务风险点
-	Operator    string `json:"operator" binding:"required"` // 操作人
-	Remark      string `json:"remark"`                      // 备注
+	Summary     string `json:"summary"`      // 业务摘要
+	InputDesc   string `json:"input_desc"`   // 入参说明
+	OutputDesc  string `json:"output_desc"`  // 返回值说明
+	ProcessFlow string `json:"process_flow"` // 业务执行流程
+	RiskPoint   string `json:"risk_point"`   // 业务风险点
+	Remark      string `json:"remark"`       // 备注
 }
 
 // EditDoc 人工校正业务文档。
@@ -102,11 +160,12 @@ type EditDocReq struct {
 //  5. 事务提交之后【异步调用向量抽象 VectorClient.UpsertDoc】同步向量库，
 //     保证向量检索使用最新校正内容。
 //
-// 校验：文档不存在返回业务错误。
-func (s *DocService) EditDoc(ctx context.Context, docID int64, req *EditDocReq) error {
+// 校验：文档不存在返回业务错误。操作人由后端从当前登录用户解析，缺省回退 system。
+func (s *DocService) EditDoc(ctx context.Context, docID int64, req *EditDocReq, operator string) error {
 	_ = ctx
-	if strings.TrimSpace(req.Operator) == "" {
-		return common.NewError(common.CodeBadRequest, "操作人不能为空")
+	operator = strings.TrimSpace(operator)
+	if operator == "" {
+		operator = "system"
 	}
 
 	var updated *model.CodeFunctionDoc
@@ -142,7 +201,7 @@ func (s *DocService) EditDoc(ctx context.Context, docID int64, req *EditDocReq) 
 			doc.RiskPoint = req.RiskPoint
 		}
 		doc.ContentSource = common.ContentSourceManual // 2=人工校正
-		doc.LastEditUser = req.Operator
+		doc.LastEditUser = operator
 		doc.LastEditTime = &now
 		if err := tx.Save(doc).Error; err != nil {
 			return common.WrapError(common.CodeInternalError, "更新文档失败", err)
@@ -159,7 +218,7 @@ func (s *DocService) EditDoc(ctx context.Context, docID int64, req *EditDocReq) 
 			OperateType:   common.DocOperateEdit,
 			BeforeContent: string(beforeJSON),
 			AfterContent:  string(afterJSON),
-			Operator:      req.Operator,
+			Operator:      operator,
 			Remark:        req.Remark,
 		}
 		if err := tx.Create(logRecord).Error; err != nil {
@@ -187,11 +246,12 @@ func (s *DocService) EditDoc(ctx context.Context, docID int64, req *EditDocReq) 
 //  4. 写入重置类型操作日志（operate_type=2）。
 //  5. 事务提交之后【异步调用向量抽象 VectorClient.UpsertDoc】同步向量库。
 //
-// 校验：文档不存在、origin_auto_doc 为空均返回业务错误。
+// 校验：文档不存在、origin_auto_doc 为空均返回业务错误。操作人由后端解析。
 func (s *DocService) ResetDoc(ctx context.Context, docID int64, operator string) error {
 	_ = ctx
-	if strings.TrimSpace(operator) == "" {
-		return common.NewError(common.CodeBadRequest, "操作人不能为空")
+	operator = strings.TrimSpace(operator)
+	if operator == "" {
+		operator = "system"
 	}
 
 	var updated *model.CodeFunctionDoc

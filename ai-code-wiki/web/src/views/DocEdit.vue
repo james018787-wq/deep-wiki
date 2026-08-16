@@ -32,10 +32,6 @@
         <textarea v-model="form.risk_point"></textarea>
       </div>
       <div class="form-item">
-        <label>操作人 operator（必填）</label>
-        <input v-model="form.operator" placeholder="例如 tester">
-      </div>
-      <div class="form-item">
         <label>备注 remark</label>
         <input v-model="form.remark" placeholder="本次修改说明">
       </div>
@@ -43,6 +39,7 @@
       <div class="actions">
         <button class="btn-save" :disabled="saving" @click="save">保存校正</button>
         <button class="btn-reset" :disabled="saving" @click="reset">重置为原始AI版本</button>
+        <button class="btn-back" @click="goSource">查看源码</button>
         <button class="btn-back" @click="goHistory">历史版本</button>
         <button class="btn-back" @click="goList">返回列表</button>
       </div>
@@ -67,7 +64,7 @@ const route = useRoute()
 const router = useRouter()
 const docId = ref(0)
 const doc = ref({})
-const form = reactive({ summary: '', input_desc: '', output_desc: '', process_flow: '', risk_point: '', operator: '', remark: '' })
+const form = reactive({ summary: '', input_desc: '', output_desc: '', process_flow: '', risk_point: '', remark: '' })
 const saving = ref(false)
 const error = ref('')
 const okMsg = ref('')
@@ -77,6 +74,9 @@ function docPath() {
 }
 function goHistory() {
   router.push('/doc-history/' + docId.value)
+}
+function goSource() {
+  window.open('/doc-source/' + docId.value, '_blank')
 }
 function goList() {
   router.push('/docs')
@@ -97,7 +97,6 @@ async function load() {
 }
 
 async function save() {
-  if (!form.operator.trim()) { error.value = '操作人不能为空'; return }
   saving.value = true
   error.value = ''
   okMsg.value = ''
@@ -113,7 +112,6 @@ async function save() {
 }
 
 async function reset() {
-  if (!form.operator.trim()) { error.value = '操作人不能为空'; return }
   if (!confirm('确认重置为原始 AI 自动生成版本？')) return
   saving.value = true
   error.value = ''
@@ -121,7 +119,7 @@ async function reset() {
   try {
     await apiRequest(docPath() + '/reset', {
       method: 'POST',
-      body: JSON.stringify({ operator: form.operator })
+      body: JSON.stringify({ remark: form.remark })
     })
     okMsg.value = '已重置为原始 AI 版本'
     load()

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"io"
 	"strconv"
 
 	"ai-code-wiki/internal/service"
@@ -102,6 +103,22 @@ func (h *DocHandler) GetDoc(c *gin.Context) {
 	common.Success(c, doc)
 }
 
+// GetDocSource 读取文档对应源码文件内容。
+//
+//	GET /api/v1/doc/:doc_id/source
+func (h *DocHandler) GetDocSource(c *gin.Context) {
+	docID, ok := parseDocID(c)
+	if !ok {
+		return
+	}
+	src, err := h.svc.Doc.GetSource(c.Request.Context(), docID)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	common.Success(c, src)
+}
+
 // EditDoc 人工校正业务文档。
 //
 //	PUT /api/v1/doc/:doc_id/edit
@@ -115,7 +132,7 @@ func (h *DocHandler) EditDoc(c *gin.Context) {
 		common.Fail(c, 400, common.CodeBadRequest, "参数错误: "+err.Error())
 		return
 	}
-	if err := h.svc.Doc.EditDoc(c.Request.Context(), docID, &req); err != nil {
+	if err := h.svc.Doc.EditDoc(c.Request.Context(), docID, &req, authOperator(c)); err != nil {
 		handleError(c, err)
 		return
 	}
@@ -131,17 +148,29 @@ func (h *DocHandler) ResetDoc(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Operator string `json:"operator" binding:"required"`
+		Remark string `json:"remark"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
 		common.Fail(c, 400, common.CodeBadRequest, "参数错误: "+err.Error())
 		return
 	}
-	if err := h.svc.Doc.ResetDoc(c.Request.Context(), docID, req.Operator); err != nil {
+	if err := h.svc.Doc.ResetDoc(c.Request.Context(), docID, authOperator(c)); err != nil {
 		handleError(c, err)
 		return
 	}
 	common.Success(c, nil)
+}
+
+// authOperator 从鉴权上下文解析当前操作人：用户令牌取 username，
+// server-to-server（X-Api-Secret）回退为 api，未知回退 system。
+func authOperator(c *gin.Context) string {
+	if name := c.GetString("username"); name != "" {
+		return name
+	}
+	if by := c.GetString("auth_by"); by != "" {
+		return by
+	}
+	return "system"
 }
 
 // ListModifiedDocs 查询指定仓库所有人工校正文档。
