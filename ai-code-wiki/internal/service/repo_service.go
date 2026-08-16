@@ -8,6 +8,7 @@ import (
 	"ai-code-wiki/internal/model"
 	"ai-code-wiki/internal/repo"
 	"ai-code-wiki/pkg/common"
+	"ai-code-wiki/pkg/git"
 
 	"gorm.io/gorm"
 )
@@ -32,6 +33,7 @@ type RegisterRepoReq struct {
 }
 
 // Register 注册代码仓库（幂等）：按仓库名不存在则创建，已存在则返回现有记录。
+// 注册前对克隆地址做可用性校验（git ls-remote：地址可达 + 默认分支存在），失败即报错。
 func (s *RepoService) Register(ctx context.Context, req *RegisterRepoReq) (*model.CodeRepo, error) {
 	_ = ctx
 	name := strings.TrimSpace(req.RepoName)
@@ -43,6 +45,18 @@ func (s *RepoService) Register(ctx context.Context, req *RegisterRepoReq) (*mode
 	if branch == "" {
 		branch = "main"
 	}
+
+	// 仓库可用性校验：地址可达 + 默认分支存在（重注册未带令牌时用已有令牌校验）
+	effectiveToken := strings.TrimSpace(req.AuthToken)
+	if effectiveToken == "" {
+		if existing, err := s.repoRepo.GetByRepoName(name); err == nil && existing != nil {
+			effectiveToken = existing.AuthToken
+		}
+	}
+	if err := verifyRepoUsable(url, branch, effectiveToken); err != nil {
+		return nil, err
+	}
+
 	info, err := s.repoRepo.EnsureRepo(name, url, branch, strings.TrimSpace(req.Description))
 	if err != nil {
 		return nil, common.WrapError(common.CodeInternalError, "注册仓库失败", err)
@@ -54,6 +68,14 @@ func (s *RepoService) Register(ctx context.Context, req *RegisterRepoReq) (*mode
 		}
 	}
 	return info, nil
+}
+
+// verifyRepoUsable 校验仓库地址可用（git ls-remote：地址可达 + 分支存在）。
+func verifyRepoUsable(url, branch, token string) error {
+	if err := git.LsRemote(url, branch, token); err != nil {
+		return common.NewError(common.CodeBadRequest, "仓库可用性校验失败（地址不可达、分支不存在或令牌无效）: "+err.Error())
+	}
+	return nil
 }
 
 // UpdateRepoReq 编辑仓库入参。
@@ -96,6 +118,10 @@ func (s *RepoService) Update(ctx context.Context, repoID int64, req *UpdateRepoR
 		if branch == "" {
 			branch = "main"
 		}
+	}
+	// 仓库可用性校验（新地址/分支必须可达，用当前令牌）
+	if err := verifyRepoUsable(url, branch, existing.AuthToken); err != nil {
+		return nil, err
 	}
 	if err := s.repoRepo.UpdateFields(repoID, map[string]any{
 		"repo_name":      name,

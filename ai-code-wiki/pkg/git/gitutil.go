@@ -72,6 +72,25 @@ func withAuthEnv(cmd *exec.Cmd, token string) {
 	)
 }
 
+// LsRemote 校验远程仓库可用性：克隆地址可达 + 指定分支存在（git ls-remote，带鉴权与超时）。
+// 本地路径/无鉴权仓库亦可校验；token 为空时不注入凭据。
+func LsRemote(repoURL, branch, token string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	args := []string{"ls-remote", "--heads", "--exit-code", repoURL}
+	if strings.TrimSpace(branch) != "" {
+		args = append(args, strings.TrimSpace(branch))
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
+	withAuthEnv(cmd, token)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git ls-remote 失败: %v, 输出: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // GetDiffFiles 获取两个 commit 之间变更的文件列表（带超时）。
 // 调用 git diff --name-only，返回相对仓库根目录的文件路径列表。
 func GetDiffFiles(repoPath, oldCommit, newCommit string) ([]string, error) {
