@@ -10,13 +10,6 @@
         <button :disabled="scanning" @click="scan">开始扫描</button>
         <button class="btn-ghost" :disabled="loading" @click="load(1)">刷新</button>
       </div>
-      <div class="scan-summary" v-if="summary">
-        <span>扫描文件：<b>{{ summary.scanned_files }}</b></span>
-        <span class="risk high">高危 <b>{{ summary.high }}</b></span>
-        <span class="risk medium">中危 <b>{{ summary.medium }}</b></span>
-        <span class="risk low">低危 <b>{{ summary.low }}</b></span>
-        <span class="risk total">发现总数 <b>{{ summary.total }}</b></span>
-      </div>
       <div class="msg err" v-if="error">{{ error }}</div>
     </div>
 
@@ -61,6 +54,7 @@
             <td><span class="status" :class="statusClass(f.status)">{{ statusLabel(f.status) }}</span></td>
             <td>
               <div class="actions">
+                <button class="btn-ghost act-btn" @click="openDetail(f)">详情</button>
                 <button v-if="f.status === 'open'" class="btn-ok act-btn" :disabled="busyId === f.id" @click="setStatus(f, 'fixed')">标记已修复</button>
                 <button v-if="f.status === 'open'" class="btn-ghost act-btn" :disabled="busyId === f.id" @click="setStatus(f, 'false_positive')">误报</button>
                 <button v-else class="btn-ghost act-btn" :disabled="busyId === f.id" @click="setStatus(f, 'open')">重新打开</button>
@@ -72,16 +66,49 @@
           </tr>
         </tbody>
       </table>
-      <div class="pager" v-if="total > pageSize">
+      <div class="pager" v-if="list.length">
         <button :disabled="page <= 1" @click="load(page - 1)">上一页</button>
         <span>{{ page }} / {{ pages }}</span>
         <button :disabled="page >= pages" @click="load(page + 1)">下一页</button>
       </div>
-      <template v-for="f in list" :key="'r'+f.id">
-        <div class="msg ok" v-if="f.recommendation && showRecommend">
-          <b>{{ typeLabel(f.secret_type) }} 修复建议：</b>{{ f.recommendation }}
+    </div>
+
+    <div class="modal-mask" v-if="detailModal.show" @click.self="closeDetail">
+      <div class="modal modal-wide">
+        <h4>安全发现详情</h4>
+        <div class="detail-grid">
+          <div class="d-row"><span>文件:行</span><b>{{ detailModal.f.file_path }}:{{ detailModal.f.line }}</b></div>
+          <div class="d-row"><span>类型</span><b>{{ typeLabel(detailModal.f.secret_type) }}</b></div>
+          <div class="d-row"><span>风险</span><span class="status" :class="riskClass(detailModal.f.risk_level)">{{ riskLabel(detailModal.f.risk_level) }}</span></div>
+          <div class="d-row"><span>命中值</span><code class="secret">{{ detailModal.f.secret_value }}</code></div>
+          <div class="d-row"><span>状态</span><span class="status" :class="statusClass(detailModal.f.status)">{{ statusLabel(detailModal.f.status) }}</span></div>
+          <div class="d-row"><span>上下文</span><code class="snip">{{ detailModal.f.snippet || '-' }}</code></div>
         </div>
-      </template>
+        <div class="detail-rec" v-if="detailModal.f.recommendation">
+          <b>修复建议</b>
+          <p>{{ detailModal.f.recommendation }}</p>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-ghost" @click="closeDetail">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-mask" v-if="scanModal.show" @click.self="closeScanModal">
+      <div class="modal">
+        <h4>扫描完成 <span class="hint">{{ repoName }}</span></h4>
+        <div class="scan-result">
+          <div class="result-row"><span>扫描文件</span><b>{{ scanModal.summary.scanned_files }}</b></div>
+          <div class="result-row risk-high"><span>高危</span><b>{{ scanModal.summary.high }}</b></div>
+          <div class="result-row risk-medium"><span>中危</span><b>{{ scanModal.summary.medium }}</b></div>
+          <div class="result-row risk-low"><span>低危</span><b>{{ scanModal.summary.low }}</b></div>
+          <div class="result-row risk-total"><span>发现总数</span><b>{{ scanModal.summary.total }}</b></div>
+        </div>
+        <div class="msg info" v-if="scanModal.summary.total === 0">未发现敏感信息，扫描干净。</div>
+        <div class="modal-actions">
+          <button class="btn-ghost" @click="closeScanModal">关闭</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -94,7 +121,8 @@ import { fetchRepos, enabledRepos, defaultRepoId } from '../store/repo'
 const repos = ref([])
 const repo_id = ref(0)
 const scanning = ref(false)
-const summary = ref(null)
+const scanModal = reactive({ show: false, summary: null })
+const detailModal = reactive({ show: false, f: {} })
 const list = ref([])
 const total = ref(0)
 const page = ref(1)
@@ -102,11 +130,14 @@ const pageSize = 20
 const loading = ref(false)
 const error = ref('')
 const busyId = ref(0)
-const showRecommend = ref(false)
 const filter = reactive({ status: '', risk: '' })
 
 const enabledRepos2 = computed(() => enabledRepos(repos.value))
 const pages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
+const repoName = computed(() => {
+  const r = repos.value.find(x => x.id === repo_id.value)
+  return r ? r.repo_name : ''
+})
 
 function typeLabel(t) { return ({ aws_access_key: 'AWS Key', github_token: 'GitHub Token', gitlab_token: 'GitLab Token', openai_key: 'AI 密钥', private_key: '私钥', conn_string: '连接串', password: '密码', secret: '密钥', api_key: 'API Key', jwt_token: 'JWT', cookie_session: '会话密钥' })[t] || t }
 function riskLabel(r) { return ({ high: '高危', medium: '中危', low: '低危' })[r] || r }
@@ -127,11 +158,25 @@ async function scan() {
   scanning.value = true
   error.value = ''
   try {
-    summary.value = await apiRequest('/security/scan', { method: 'POST', body: JSON.stringify({ repo_id: repo_id.value }) })
-    showRecommend.value = true
+    const s = await apiRequest('/security/scan', { method: 'POST', body: JSON.stringify({ repo_id: repo_id.value }) })
+    scanModal.summary = s
+    scanModal.show = true
     load(1)
   } catch (e) { error.value = '扫描失败: ' + e.message }
   finally { scanning.value = false }
+}
+
+function openDetail(f) {
+  detailModal.f = f
+  detailModal.show = true
+}
+
+function closeDetail() {
+  detailModal.show = false
+}
+
+function closeScanModal() {
+  scanModal.show = false
 }
 
 async function load(p) {
@@ -168,12 +213,31 @@ onMounted(initRepos)
 .actions { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; }
 .act-btn { min-width: 90px; height: 32px; padding: 0 8px; white-space: nowrap; box-sizing: border-box; }
 td:last-child { white-space: nowrap; min-width: 196px; }
-.scan-summary { display: flex; gap: 18px; align-items: center; font-size: 13px; color: var(--text-dim); margin-bottom: 6px; flex-wrap: wrap; }
-.risk b { font-size: 15px; }
-.risk.high b { color: var(--red); }
-.risk.medium b { color: var(--amber); }
-.risk.low b { color: var(--green); }
-.risk.total b { color: var(--cyan); }
+.scan-result { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.result-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px;
+  font-size: 13px; color: var(--text-dim); background: rgba(255,255,255,.03);
+}
+.result-row b { font-size: 16px; color: var(--text-bright); }
+.result-row.risk-high b { color: var(--red); }
+.result-row.risk-medium b { color: var(--amber); }
+.result-row.risk-low b { color: var(--green); }
+.result-row.risk-total b { color: var(--cyan); }
+.detail-grid { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.d-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px; border: 1px solid var(--line); border-radius: 8px;
+  font-size: 13px; color: var(--text-dim); background: rgba(255,255,255,.03);
+}
+.d-row span:first-child { min-width: 64px; color: var(--text-dim); }
+.d-row b { color: var(--text-bright); word-break: break-all; }
+.detail-rec {
+  border: 1px solid rgba(96, 165, 250, 0.3); border-radius: 8px;
+  background: rgba(96, 165, 250, 0.08); padding: 10px 12px; margin-top: 10px;
+}
+.detail-rec b { color: var(--blue); font-size: 13px; }
+.detail-rec p { margin: 6px 0 0; color: var(--text); font-size: 13px; line-height: 1.6; }
 .line { color: var(--amber); }
 .secret { font-family: var(--mono); font-size: 12px; color: var(--red); background: rgba(248,113,113,.08); padding: 1px 6px; border-radius: 4px; }
 .snip { font-family: var(--mono); font-size: 12px; color: #93a4c3; background: rgba(255,255,255,.04); padding: 1px 6px; border-radius: 4px; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
