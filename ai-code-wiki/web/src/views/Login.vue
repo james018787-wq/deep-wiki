@@ -19,8 +19,10 @@
   <div class="login-wrap">
     <div class="login-card">
       <div class="brand-line">
-        <img class="logo-mark" src="/logo.svg" alt="AI·CODE WIKI">
-        <div class="logo">AI·CODE WIKI</div>
+        <div class="brand-row">
+          <img class="logo-mark" src="/logo.svg" alt="AI·CODE WIKI">
+          <div class="logo">AI·CODE WIKI</div>
+        </div>
         <div class="tagline">代码知识库 · 智能问答 · 迭代影响分析</div>
       </div>
       <h1>系统登录</h1>
@@ -264,10 +266,13 @@ async function doLogin() {
 }
 .login-tip { margin-top: 16px; text-align: center; color: #51698c; font-size: 12px; }
 .brand-line { text-align: center; margin-bottom: 22px; }
-.brand-line .logo-mark {
-  display: block; margin: 0 auto;
-  width: 58px; height: 58px; margin-bottom: 10px;
-  filter: drop-shadow(0 0 14px rgba(34, 211, 238, 0.55));
+.brand-row { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.brand-row .logo-mark {
+  display: inline-block;
+  width: 42px; height: 42px;
+  filter: drop-shadow(0 0 5px rgba(34, 211, 238, 0.95))
+          drop-shadow(0 0 16px rgba(34, 211, 238, 0.6))
+          drop-shadow(0 0 30px rgba(139, 92, 246, 0.45));
 }
 .brand-line .logo {
   font-family: var(--mono); font-weight: 800; font-size: 26px; letter-spacing: 4px;
