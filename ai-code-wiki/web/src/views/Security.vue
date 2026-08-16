@@ -60,9 +60,11 @@
             <td><code class="snip">{{ f.snippet || '-' }}</code></td>
             <td><span class="status" :class="statusClass(f.status)">{{ statusLabel(f.status) }}</span></td>
             <td>
-              <button v-if="f.status === 'open'" class="btn-ok" :disabled="busyId === f.id" @click="setStatus(f, 'fixed')">标记已修复</button>
-              <button v-if="f.status === 'open'" class="btn-ghost" :disabled="busyId === f.id" @click="setStatus(f, 'false_positive')" style="margin-left:4px;">误报</button>
-              <button v-else class="btn-ghost" :disabled="busyId === f.id" @click="setStatus(f, 'open')">重新打开</button>
+              <div class="actions">
+                <button v-if="f.status === 'open'" class="btn-ok act-btn" :disabled="busyId === f.id" @click="setStatus(f, 'fixed')">标记已修复</button>
+                <button v-if="f.status === 'open'" class="btn-ghost act-btn" :disabled="busyId === f.id" @click="setStatus(f, 'false_positive')">误报</button>
+                <button v-else class="btn-ghost act-btn" :disabled="busyId === f.id" @click="setStatus(f, 'open')">重新打开</button>
+              </div>
             </td>
           </tr>
           <tr v-if="!loading && list.length === 0">
@@ -163,6 +165,9 @@ onMounted(initRepos)
 </script>
 
 <style scoped>
+.actions { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; }
+.act-btn { min-width: 90px; height: 32px; padding: 0 8px; white-space: nowrap; box-sizing: border-box; }
+td:last-child { white-space: nowrap; min-width: 196px; }
 .scan-summary { display: flex; gap: 18px; align-items: center; font-size: 13px; color: var(--text-dim); margin-bottom: 6px; flex-wrap: wrap; }
 .risk b { font-size: 15px; }
 .risk.high b { color: var(--red); }
