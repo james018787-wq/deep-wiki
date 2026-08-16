@@ -90,15 +90,17 @@ func (c *ChromaClient) write(doc *DocVector) error {
 		"module_name": doc.ModuleName,
 		"file_path":   doc.FilePath,
 		"func_name":   doc.FuncName,
+		"repo_id":     doc.RepoID,
+		"func_line":   doc.FuncLine,
 	}
 	if doc.RepoName != "" {
 		meta["repo_name"] = doc.RepoName
 	}
 	body, err := json.Marshal(map[string]any{
-		"ids":         []string{strconv.FormatInt(doc.DocID, 10)},
-		"embeddings":  [][]float64{vec},
-		"documents":   []string{doc.Content},
-		"metadatas":   []map[string]any{meta},
+		"ids":        []string{strconv.FormatInt(doc.DocID, 10)},
+		"embeddings": [][]float64{vec},
+		"documents":  []string{doc.Content},
+		"metadatas":  []map[string]any{meta},
 	})
 	if err != nil {
 		return fmt.Errorf("向量写入请求序列化失败: %w", err)
@@ -137,10 +139,10 @@ func (c *ChromaClient) DeleteDoc(docID int64) error {
 }
 
 // SearchQuery 向量相似度检索，复用原有 pkg/vector.QuerySimilar 逻辑。
-func (c *ChromaClient) SearchQuery(queryVector []float64, limit int) ([]int64, error) {
+func (c *ChromaClient) SearchQuery(queryVector []float64, limit int, filter *SearchFilter) ([]int64, error) {
 	colID, err := c.resolveCollectionID()
 	if err != nil {
 		return nil, err
 	}
-	return QuerySimilar(c.chromaURL, colID, queryVector, limit)
+	return QuerySimilar(c.chromaURL, colID, queryVector, limit, filter)
 }

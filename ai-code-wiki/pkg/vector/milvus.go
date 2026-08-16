@@ -42,6 +42,7 @@ type MilvusClient struct {
 // 集合字段与长度常量（与 code_function_doc 表字段对应）。
 const (
 	milvusFieldDocID      = "doc_id"
+	milvusFieldRepoID     = "repo_id"
 	milvusFieldRepoName   = "repo_name"
 	milvusFieldModuleName = "module_name"
 	milvusFieldFilePath   = "file_path"
@@ -55,7 +56,7 @@ const (
 	milvusFuncMaxLen     = 128  // func_name VarChar 长度
 	milvusContentMaxLen  = 6000 // content VarChar 长度（超长截断，全文以 MySQL 为准）
 
-	milvusOpTimeout     = 30 * time.Second  // 单次操作超时
+	milvusOpTimeout      = 30 * time.Second // 单次操作超时
 	milvusConnectTimeout = 15 * time.Second // 连接超时
 )
 
@@ -91,6 +92,24 @@ func (m *MilvusClient) connect() (client.Client, error) {
 	m.cli = cli
 	m.connected = true
 	return cli, nil
+}
+
+// milvusExpr 构建 Milvus 检索过滤表达式（按 repo_id / module_name）。
+func milvusExpr(filter *SearchFilter) string {
+	if filter == nil {
+		return ""
+	}
+	var conds []string
+	if filter.RepoID > 0 {
+		conds = append(conds, fmt.Sprintf("%s == %d", milvusFieldRepoID, filter.RepoID))
+	}
+	if m := strings.TrimSpace(filter.Module); m != "" {
+		conds = append(conds, fmt.Sprintf("%s == %q", milvusFieldModuleName, m))
+	}
+	if len(conds) == 0 {
+		return ""
+	}
+	return strings.Join(conds, " && ")
 }
 
 // ensureReady 建立连接并确保集合存在（不存在则自动创建 + 建索引 + 加载）。
@@ -129,6 +148,10 @@ func (m *MilvusClient) createCollection(ctx context.Context, cli client.Client) 
 			WithDataType(entity.FieldTypeVarChar).
 			WithMaxLength(milvusRepoMaxLen).
 			WithDescription("所属仓库")).
+		WithField(entity.NewField().
+			WithName(milvusFieldRepoID).
+			WithDataType(entity.FieldTypeInt64).
+			WithDescription("所属仓库id（检索过滤）")).
 		WithField(entity.NewField().
 			WithName(milvusFieldModuleName).
 			WithDataType(entity.FieldTypeVarChar).
@@ -206,6 +229,7 @@ func (m *MilvusClient) write(doc *DocVector) error {
 
 	columns := []entity.Column{
 		entity.NewColumnInt64(milvusFieldDocID, []int64{doc.DocID}),
+		entity.NewColumnInt64(milvusFieldRepoID, []int64{doc.RepoID}),
 		entity.NewColumnVarChar(milvusFieldRepoName, []string{doc.RepoName}),
 		entity.NewColumnVarChar(milvusFieldModuleName, []string{doc.ModuleName}),
 		entity.NewColumnVarChar(milvusFieldFilePath, []string{doc.FilePath}),
@@ -239,7 +263,7 @@ func (m *MilvusClient) DeleteDoc(docID int64) error {
 }
 
 // SearchQuery 向量相似度检索，返回按距离升序的候选 doc_id 列表。
-func (m *MilvusClient) SearchQuery(queryVector []float64, limit int) ([]int64, error) {
+func (m *MilvusClient) SearchQuery(queryVector []float64, limit int, filter *SearchFilter) ([]int64, error) {
 	if len(queryVector) == 0 {
 		return nil, errors.New("查询向量为空")
 	}
@@ -261,7 +285,7 @@ func (m *MilvusClient) SearchQuery(queryVector []float64, limit int) ([]int64, e
 	vectors := []entity.Vector{
 		entity.FloatVector(toFloat32s(queryVector)),
 	}
-	results, err := cli.Search(ctx, m.coll, nil, "", []string{milvusFieldDocID},
+	results, err := cli.Search(ctx, m.coll, nil, milvusExpr(filter), []string{milvusFieldDocID},
 		vectors, milvusFieldEmbedding, entity.L2, limit, sp)
 	if err != nil {
 		return nil, fmt.Errorf("Milvus 向量检索失败: %w", err)

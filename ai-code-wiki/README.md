@@ -239,6 +239,9 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | PUT | `/api/v1/repo/:repo_id/status` | 启停仓库（1 启用 / 2 停用） |
 | DELETE | `/api/v1/repo/:repo_id/token` | 清除仓库访问令牌 |
 | GET | `/api/v1/report/basic` | 基础统计：总文档数 / 人工校正数 / 自动生成数 / 待复核数 / 模块总数 |
+| POST | `/api/v1/security/scan` | 触发仓库全量代码安全扫描（硬编码密钥/密码/令牌），body: `{repo_id}` → 扫描汇总（扫描文件数 + 高危/中危/低危发现数） |
+| GET | `/api/v1/security/list?repo_id=&status=&risk=&page=&page_size=` | 分页查询安全发现（脱敏存储，支持状态/风险过滤） |
+| PUT | `/api/v1/security/:id/status` | 更新发现状态（open/fixed/false_positive） |
 
 ### 4.1 前端（Vue3 + Vite SPA）
 
@@ -255,6 +258,7 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | `/doc-history/:id` | 文档历史版本 | 历史列表 + 快照详情，查看修改前后原始 JSON |
 | `/tasks` | 任务管理 | 任务列表 / 状态查询 / 触发解析任务 |
 | `/repos` | 仓库管理 | 注册（含可选访问令牌）/ 启停 / 清除令牌 |
+| `/security` | 安全扫描 | 触发扫描（全量/增量）→ 发现列表（文件:行、类型、风险、脱敏命中值）+ 修复建议 + 状态管理（已修复/误报） |
 
 前端构建（本地开发或重新生成 `dist`，需 Node ≥ 18；国内网络已配置 npmmirror 镜像）：
 
@@ -370,9 +374,16 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
    - 增量解析时逐函数比对源码：AI 自动文档且源码未变更 → 缓存命中，直接跳过 LLM 生成（任务日志输出命中率）；
    - `LLM_MAX_CALLS_PER_TASK` 设置单任务 LLM 生成调用预算上限，超限跳过剩余函数，防止批量重建超支。
 14. **影响分析增强（branch 模式）**
-   - 接口/API 签名变更检测：对比默认分支与目标分支每个 Go 函数签名，输出 added / modified（含旧新签名）/ removed；
-   - 数据库表结构变更：识别 diff 中 SQL 文件的 建表/改表/删表/重命名，并 best-effort 关联受影响业务模块；
-   - 回归测试圈定：扫描仓库 `*_test.go`，正文引用受影响函数的测试文件进入建议清单。
+    - 接口/API 签名变更检测：对比默认分支与目标分支每个 Go 函数签名，输出 added / modified（含旧新签名）/ removed；
+    - 数据库表结构变更：识别 diff 中 SQL 文件的 建表/改表/删表/重命名，并 best-effort 关联受影响业务模块；
+    - 回归测试圈定：扫描仓库 `*_test.go`，正文引用受影响函数的测试文件进入建议清单。
+15. **代码安全扫描（敏感信息检测）**
+   - 正则规则引擎（`pkg/secretscan`）检测硬编码密钥/密码/令牌/私钥/连接串（11 类规则，分高/中/低危），命中值一律脱敏入库；
+   - 发现落库 `code_secret_finding`，前端 `/security` 页面支持 扫描触发（全量/解析任务增量自动扫描）、风险/状态过滤、标记已修复/误报、修复建议；
+   - 陈旧处理：扫描后未再命中的 open 发现自动标记为已修复。
+16. **增量向量精度（函数级）**
+   - 向量化内容升级为函数级全业务字段（摘要+入参+出参+流程+风险），metadata 记录 `repo_id`/`func_line`；
+   - 检索在向量侧按 `repo_id`/`module_name` 元数据过滤（Chroma `where` / Milvus 表达式），候选只在目标仓库/模块内收敛，避免其他仓库高分文档挤占 TopK，检索更准。
 
 ## 7. 表结构简要说明
 
@@ -451,3 +462,15 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
 | retry_count | 失败重试次数（队列消费失败重新投递时自增，状态置回待执行） |
 | err_msg | 错误信息 |
 | finish_time | 完成时间 |
+### 7.9 code_secret_finding 代码安全扫描发现表
+
+| 字段 | 说明 |
+| ---- | ---- |
+| repo_id | 所属仓库id |
+| file_path / line | 文件路径 / 命中行号（1基） |
+| secret_type | 类型：private_key / aws_access_key / github_token / gitlab_token / openai_key / conn_string / password / secret / api_key / jwt_token / cookie_session |
+| risk_level | 风险等级：high / medium / low |
+| secret_value | 命中敏感值（**脱敏存储**，仅保留前缀与后缀） |
+| snippet | 所在行文本（脱敏） |
+| recommendation | 修复建议 |
+| status | open（待处理）/ fixed（已修复）/ false_positive（误报） |

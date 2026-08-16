@@ -43,6 +43,7 @@ type Service struct {
 	Impact      *ImpactService
 	Chat        *ChatService
 	Auth        *AuthService
+	SecretScan  *SecretScanService
 
 	// ChatStore 会话记忆存储（Redis 优先，降级内存）
 	ChatStore chatstore.Store
@@ -86,7 +87,8 @@ func NewService(db *gorm.DB, cfg *config.Config) (*Service, error) {
 
 	// 需求分析服务依赖检索服务，先构建检索服务
 	searchSvc := NewSearchService(db, cfg, vc)
-	taskSvc := NewTaskService(db, cfg, vc, queue)
+	secretSvc := NewSecretScanService(db, cfg)
+	taskSvc := NewTaskService(db, cfg, vc, queue, secretSvc)
 	chatStore := chatstore.New(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.TTLDays)
 	s := &Service{
 		db:          db,
@@ -102,6 +104,7 @@ func NewService(db *gorm.DB, cfg *config.Config) (*Service, error) {
 		Impact:      NewImpactService(db, cfg, searchSvc),
 		Chat:        NewChatService(db, cfg, searchSvc, chatStore),
 		Auth:        NewAuthService(db),
+		SecretScan:  secretSvc,
 		ChatStore:   chatStore,
 		TaskQueue:   queue,
 		TaskWorker:  NewTaskWorker(queue, taskSvc, vc, cfg.TaskQueue.MaxRetry, cfg.TaskQueue.Concurrency),

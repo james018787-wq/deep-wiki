@@ -45,6 +45,7 @@ type TaskService struct {
 	vc           vector.VectorClient      // 向量存储抽象（业务不感知 chroma/milvus）
 	queue        taskqueue.TaskQueue      // 异步任务队列（提交入口，消费由独立 Worker 完成）
 	fileFilter   *filefilter.FileFilter   // 文件过滤规则（跳过测试/依赖/非业务代码）
+	secretScan   *SecretScanService       // 代码安全扫描（增量扫描变更文件，nil 时跳过）
 }
 
 // pipelineStats 单次解析任务的成本统计（缓存命中 / LLM 调用 / 预算跳过）。
@@ -57,7 +58,7 @@ type pipelineStats struct {
 
 // NewTaskService 构建任务服务。
 // vc 为 nil 时跳过向量同步（向量引擎未配置/初始化失败场景）。
-func NewTaskService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient, queue taskqueue.TaskQueue) *TaskService {
+func NewTaskService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient, queue taskqueue.TaskQueue, secretScan *SecretScanService) *TaskService {
 	return &TaskService{
 		db:           db,
 		taskRepo:     newTaskRepo(db),
@@ -77,6 +78,7 @@ func NewTaskService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient, que
 			IgnoreFileRe: filefilter.SplitList(cfg.Filter.IgnoreFileRe),
 			AllowExts:    filefilter.SplitList(cfg.Filter.AllowExts),
 		}),
+		secretScan: secretScan,
 	}
 }
 
@@ -304,6 +306,16 @@ func (s *TaskService) process(ctx context.Context, task *model.TaskRecord, stats
 		}
 		ok++
 	}
+
+	// 6. 代码安全扫描（增量：扫描本次 diff 的全部变更文件，best-effort，独立于文档生成）
+	if s.secretScan != nil {
+		if _, err := s.secretScan.ScanFiles(ctx, repoInfo, cloneDir, files); err != nil {
+			logger.Warn(ctx, "任务 %s 代码安全扫描失败: %v", task.TaskID, err)
+		} else {
+			logger.Info(ctx, "任务 %s 代码安全扫描完成", task.TaskID)
+		}
+	}
+
 	if ok == 0 {
 		return fmt.Errorf("所有代码文件处理均失败")
 	}

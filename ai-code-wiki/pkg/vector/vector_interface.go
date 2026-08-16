@@ -26,7 +26,8 @@ type VectorClient interface {
 
 	// SearchQuery 向量相似度检索。
 	// queryVector 为经 EmbedText 生成的查询向量，返回按相关性排序的候选 doc_id。
-	SearchQuery(queryVector []float64, limit int) ([]int64, error)
+	// filter 非 nil 时在向量侧按元数据过滤（如 repo_id / module），提升函数级检索精度。
+	SearchQuery(queryVector []float64, limit int, filter *SearchFilter) ([]int64, error)
 }
 
 // Options VectorClient 构建参数。

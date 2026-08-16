@@ -135,8 +135,8 @@ func (s *SearchService) Search(ctx context.Context, req *SearchReq) (*SearchResu
 // 无相关文档时返回空切片（不报错），由调用方决定后续处理。
 // RetrieveRelatedDocs 检索与 query 相关的业务文档（含跨模块扩充），用于 RAG 问答与需求分析。
 func (s *SearchService) RetrieveRelatedDocs(ctx context.Context, repoID int64, query string) ([]*model.CodeFunctionDoc, error) {
-	// step2: query 转向量 -> 查询 chroma 得到候选 doc_id 列表（混合检索：向量召回 ∪ 关键词召回）
-	candidateIDs, err := s.vectorRecall(ctx, query)
+	// step2: query 转向量 -> 查询 chroma 得到候选 doc_id 列表（向量侧按仓库过滤 + 关键词召回并集）
+	candidateIDs, err := s.vectorRecall(ctx, repoID, query)
 	if err != nil {
 		return nil, err
 	}
@@ -209,8 +209,8 @@ func mergeCandidateIDs(vectorIDs []int64, keywordDocs []*model.CodeFunctionDoc) 
 // RetrieveTargetDocs 向量召回候选文档（【不做跨模块扩充】），用于影响分析定位"直接修改"的变更函数种子。
 // 与 RetrieveRelatedDocs 的区别：不经过 expandRecall，避免跨模块关联把无关函数卷入变更集合。
 func (s *SearchService) RetrieveTargetDocs(ctx context.Context, repoID int64, query string) ([]*model.CodeFunctionDoc, error) {
-	// step1: query 转向量 -> 向量召回候选 doc_id
-	candidateIDs, err := s.vectorRecall(ctx, query)
+	// step1: query 转向量 -> 向量召回候选 doc_id（向量侧按仓库过滤）
+	candidateIDs, err := s.vectorRecall(ctx, repoID, query)
 	if err != nil {
 		return nil, err
 	}
@@ -221,8 +221,8 @@ func (s *SearchService) RetrieveTargetDocs(ctx context.Context, repoID int64, qu
 	return s.loadDocs(ctx, repoID, candidateIDs)
 }
 
-// vectorRecall 向量初步召回（仅做候选 doc_id 检索，不做跨模块扩充）。
-func (s *SearchService) vectorRecall(ctx context.Context, query string) ([]int64, error) {
+// vectorRecall 向量初步召回（向量侧按仓库过滤，提升函数级检索精度；仅做候选 doc_id 检索，不做跨模块扩充）。
+func (s *SearchService) vectorRecall(ctx context.Context, repoID int64, query string) ([]int64, error) {
 	if s.llmBaseURL == "" || s.vc == nil {
 		return nil, common.NewError(common.CodeInvalidState, "向量检索服务未配置")
 	}
@@ -233,8 +233,9 @@ func (s *SearchService) vectorRecall(ctx context.Context, query string) ([]int64
 		return nil, common.WrapError(common.CodeUpstreamError, "向量服务暂时不可用，请稍后重试", err)
 	}
 
-	// 通过向量抽象检索候选 doc_id（底层为 chroma 或 milvus，业务无感知）
-	ids, err := s.vc.SearchQuery(vec, TopK)
+	// 向量侧按仓库过滤：repoID>0 时只在目标仓库内取 TopK，避免其他仓库高分文档挤占候选位
+	filter := &vector.SearchFilter{RepoID: repoID}
+	ids, err := s.vc.SearchQuery(vec, TopK, filter)
 	if err != nil {
 		return nil, common.WrapError(common.CodeUpstreamError, "向量检索失败，请稍后重试", err)
 	}

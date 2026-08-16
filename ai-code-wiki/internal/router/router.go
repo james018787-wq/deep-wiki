@@ -133,5 +133,13 @@ func Register(r *gin.Engine, h *handler.Handler) {
 		// ========== 知识库统计 ==========
 		// 基础统计（文档/校正/待复核/模块数量）
 		api.GET("/report/basic", h.Report.Basic)
+
+		// ========== 代码安全扫描 ==========
+		// 触发仓库全量安全扫描
+		api.POST("/security/scan", h.Security.Scan)
+		// 分页查询安全发现
+		api.GET("/security/list", h.Security.List)
+		// 更新安全发现状态（open/fixed/false_positive）
+		api.PUT("/security/:id/status", h.Security.UpdateStatus)
 	}
 }

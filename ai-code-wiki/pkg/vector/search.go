@@ -54,7 +54,8 @@ func EmbedText(baseURL, text string) ([]float64, error) {
 // chroma 查询接口：POST /api/v1/collections/{collectionID}/query
 // 约定：向量记录 id 即 code_function_doc.doc_id（字符串形式）。
 // collectionID 为集合 UUID（Chroma 0.5.x 起 REST API 按 UUID 寻址，由调用方解析）。
-func QuerySimilar(chromaBaseURL, collectionID string, queryVector []float64, limit int) ([]int64, error) {
+// filter 非 nil 时追加 where 条件（repo_id / module_name 元数据过滤），收敛候选范围。
+func QuerySimilar(chromaBaseURL, collectionID string, queryVector []float64, limit int, filter *SearchFilter) ([]int64, error) {
 	if chromaBaseURL == "" || collectionID == "" {
 		return nil, fmt.Errorf("向量库地址或集合未配置")
 	}
@@ -63,16 +64,21 @@ func QuerySimilar(chromaBaseURL, collectionID string, queryVector []float64, lim
 	}
 	apiURL := strings.TrimRight(chromaBaseURL, "/") + "/api/v1/collections/" + url.PathEscape(collectionID) + "/query"
 
-	body, err := json.Marshal(map[string]any{
+	body := map[string]any{
 		"query_embeddings": [][]float64{queryVector},
 		"n_results":        limit,
 		"include":          []string{"metadatas"},
-	})
+	}
+	if where := chromaWhere(filter); len(where) > 0 {
+		body["where"] = where
+	}
+
+	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("向量检索请求序列化失败: %w", err)
 	}
 
-	resp, err := httpPost(apiURL, body, 15*time.Second)
+	resp, err := httpPost(apiURL, payload, 15*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +102,28 @@ func QuerySimilar(chromaBaseURL, collectionID string, queryVector []float64, lim
 		}
 	}
 	return docIDs, nil
+}
+
+// chromaWhere 构建 chroma where 过滤条件（多条件用 $and 组合）。
+func chromaWhere(filter *SearchFilter) map[string]any {
+	if filter == nil {
+		return nil
+	}
+	var conds []map[string]any
+	if filter.RepoID > 0 {
+		conds = append(conds, map[string]any{"repo_id": filter.RepoID})
+	}
+	if strings.TrimSpace(filter.Module) != "" {
+		conds = append(conds, map[string]any{"module_name": strings.TrimSpace(filter.Module)})
+	}
+	switch len(conds) {
+	case 0:
+		return nil
+	case 1:
+		return conds[0]
+	default:
+		return map[string]any{"$and": conds}
+	}
 }
 
 // httpPost 通用 POST 请求，带超时。

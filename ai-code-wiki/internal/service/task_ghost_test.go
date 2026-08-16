@@ -17,7 +17,7 @@ import (
 func TestCleanupGhostDocs(t *testing.T) {
 	db := newTestDB(t)
 	queue := taskqueue.NewMemoryQueue()
-	ts := NewTaskService(db, &config.Config{}, nil, queue)
+	ts := NewTaskService(db, &config.Config{}, nil, queue, nil)
 
 	repoInfo := &model.CodeRepo{ID: 1, RepoName: "testrepo"}
 	file := "order/service.go"
@@ -79,7 +79,7 @@ func TestCleanupGhostDocs(t *testing.T) {
 func TestCleanupFileDocs(t *testing.T) {
 	db := newTestDB(t)
 	queue := taskqueue.NewMemoryQueue()
-	ts := NewTaskService(db, &config.Config{}, nil, queue)
+	ts := NewTaskService(db, &config.Config{}, nil, queue, nil)
 
 	repoInfo := &model.CodeRepo{ID: 1, RepoName: "testrepo"}
 	file := "order/removed.go"
