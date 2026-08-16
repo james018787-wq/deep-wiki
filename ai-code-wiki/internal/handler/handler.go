@@ -16,6 +16,7 @@ type Handler struct {
 	Report      *ReportHandler
 	Repo        *RepoHandler
 	Impact      *ImpactHandler
+	Chat        *ChatHandler
 }
 
 // NewHandler 构建处理器聚合对象。
@@ -29,5 +30,6 @@ func NewHandler(svc *service.Service) *Handler {
 	h.Report = NewReportHandler(svc)
 	h.Repo = NewRepoHandler(svc)
 	h.Impact = NewImpactHandler(svc)
+	h.Chat = NewChatHandler(svc)
 	return h
 }

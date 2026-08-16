@@ -81,6 +81,14 @@ func Register(r *gin.Engine, h *handler.Handler) {
 		// 迭代影响分析（分支 diff 或显式函数 → 上游/下游影响点）
 		api.POST("/impact/analyze", h.Impact.Analyze)
 
+		// ========== 多轮对话（Redis 会话记忆） ==========
+		// 多轮问答：先问模块逻辑，可连续追问（带会话记忆）
+		api.POST("/chat/ask", h.Chat.Ask)
+		// 会话列表
+		api.GET("/chat/sessions", h.Chat.ListSessions)
+		// 会话历史消息
+		api.GET("/chat/history", h.Chat.History)
+
 		// ========== 需求分析 ==========
 		// 新产品需求分析
 		api.POST("/requirement/analyze", h.Requirement.Analyze)

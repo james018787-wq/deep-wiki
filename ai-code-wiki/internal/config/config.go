@@ -14,11 +14,20 @@ import (
 type Config struct {
 	Server    ServerConfig    `yaml:"server"`
 	MySQL     MySQLConfig     `yaml:"mysql"`
+	Redis     RedisConfig     `yaml:"redis"`
 	Git       GitConfig       `yaml:"git"`
 	Vector    VectorConfig    `yaml:"vector"`
 	TaskQueue TaskQueueConfig `yaml:"task_queue"`
 	Filter    FilterConfig    `yaml:"filter"`
 	LLM       LLMConfig       `yaml:"llm"`
+}
+
+// RedisConfig 会话记忆 Redis 配置。
+type RedisConfig struct {
+	Addr     string `yaml:"addr"`     // redis 连接地址，如 redis:6379（REDIS_ADDR）
+	Password string `yaml:"password"` // redis 密码（可选，REDIS_PASSWORD）
+	DB       int    `yaml:"db"`       // 逻辑库编号（REDIS_DB，默认 0）
+	TTLDays  int    `yaml:"ttl_days"` // 会话过期天数（REDIS_TTL_DAYS，默认 7）
 }
 
 // ServerConfig 服务运行配置。
@@ -145,6 +154,12 @@ func (c *Config) ApplyEnv() {
 	c.TaskQueue.QueueName = envStr("TASK_QUEUE_NAME", c.TaskQueue.QueueName)
 	c.TaskQueue.MaxRetry = envInt("TASK_QUEUE_MAX_RETRY", c.TaskQueue.MaxRetry)
 	c.TaskQueue.Concurrency = envInt("TASK_QUEUE_CONCURRENCY", c.TaskQueue.Concurrency)
+
+	// 会话记忆 Redis（REDIS_ADDR / REDIS_PASSWORD / REDIS_DB / REDIS_TTL_DAYS）
+	c.Redis.Addr = envStr("REDIS_ADDR", c.Redis.Addr)
+	c.Redis.Password = envStr("REDIS_PASSWORD", c.Redis.Password)
+	c.Redis.DB = envInt("REDIS_DB", c.Redis.DB)
+	c.Redis.TTLDays = envInt("REDIS_TTL_DAYS", c.Redis.TTLDays)
 
 	// 解析流水线文件过滤规则（逗号分隔；未设置时回退到 yaml/默认值）
 	c.Filter.IgnoreDirs = envStr("FILTER_IGNORE_DIRS", c.Filter.IgnoreDirs)

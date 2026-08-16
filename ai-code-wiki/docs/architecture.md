@@ -28,11 +28,11 @@
 
 | 组件 | 技术栈 | 职责 |
 | ---- | ---- | ---- |
-| ai-code-wiki | Go 1.22 + Gin + GORM | 业务编排：任务流水线、文档管理、模块依赖图谱、RAG 检索、需求分析、透传调度参数与元信息 |
+| ai-code-wiki | Go 1.22 + Gin + GORM | 业务编排：任务流水线、文档管理、模块依赖图谱、RAG 检索、需求分析、迭代影响分析、多轮对话、透传调度参数与元信息 |
 | ai-wiki-llm | Python 3.11 + FastAPI + LangChain | **模型唯一入口**：文档生成、变更摘要、embedding、向量写入、RAG 重排、多模型调度（低价优先/降级/熔断/限流） |
-| MySQL 8.0 | — | 业务库：task_record / code_function_doc / module_relation / doc_modify_log 等 |
+| MySQL 8.0 | — | 业务库：task_record / code_function_doc / module_relation / function_call_edge / code_change_log 等 |
 | Chroma / Milvus | 向量库 | 文档向量存储与相似度检索（`VECTOR_DRIVER` 切换） |
-| Redis 7（可选） | — | ai-wiki-llm 多模型调度的分布式熔断/限流状态（未配置则 fail-open） |
+| Redis 7 | — | ① Go 多轮对话会话记忆（`pkg/chatstore`）；② ai-wiki-llm 多模型调度的分布式熔断/限流状态（未配置则 fail-open / 内存降级） |
 | 外部模型 API | OpenAI 兼容 | DeepSeek / 阿里云百炼 / OpenAI / Anthropic ...（文本生成、embedding） |
 
 ## 三、模型交互全景
@@ -59,6 +59,7 @@
 | 4 | Go `pkg/vector.EmbedText` → ai-wiki-llm `/api/embedding/text` | Python `OpenAIEmbeddings` | query/文档转向量 | embedding 专用模型 | ❌ 否（**必须固定，禁止调度**，见 4.3） |
 | 5 | Go `ChromaClient.UpsertDoc` → ai-wiki-llm `/api/vector/upsert_doc` | Python embed + 写 Chroma | 文档向量写入 | 同上 | ❌ 否 |
 | 6 | Go `MilvusClient` → Milvus + `/api/embedding/text` | Go 直连向量库 + Python embed | 向量写入/检索 | 同上 | ❌ 否 |
+| 7 | Go `impact` / `chat` → ai-wiki-llm `/api/chat` | Python 调度器 → 各家 API | 设计文档合成 / 多轮问答 / 滚动摘要 | `model_pool.yaml` 模型池 | ✅ **是** |
 
 > 注意：Chroma 的**检索**（`SearchQuery`）是 Go 直连 Chroma HTTP，只有「向量化」这个动作经过 ai-wiki-llm；Milvus 模式下 Go 全程直连向量库（向量化仍走 Python）。**任何模型 API 调用均经过 ai-wiki-llm，Go 侧无直连模型代码。**
 
@@ -104,9 +105,34 @@ PUT /api/v1/doc/:doc_id/edit（事务 + 快照日志）
   └─ 异步 UpsertDoc ─▶ 向量库更新（保证检索用最新校正内容）
 ```
 
+### 4.5 迭代影响分析（POST /api/v1/impact/analyze）
+
+分析「本次迭代改了什么 → 会影响哪些函数」，输出影响点 + 设计文档初稿，并逐函数落库 `code_change_log`。
+
+```
+分支（git diff）或自然语言（RAG 定位）或显式函数 → 变更种子函数集
+  1. 函数级调用图：function_call_edge 表（task_service 流水线增量重建，跨包边自动聚合 module_relation）
+  2. 双向 BFS 传播：反向找调用者（上游/谁受影响），正向找被调用者（下游/牵连谁），受 max_depth 限制
+  3. LLM 合成设计文档初稿（synthesizeDesignDoc）+ 逐函数个性化变更记录（synthesizeFuncChanges，失败本地兜底）
+  4. 落库 code_change_log（每文档一条，含 version），支持 session 多轮追问累计变更函数
+```
+
+### 4.6 多轮智能对话（POST /api/v1/chat/ask）
+
+```
+用户问题（session_id 关联会话）
+  1. RAG 检索相关文档（复用 RetrieveRelatedDocs）
+  2. 读取会话记忆：滚动摘要 summary + 最近窗口（12 条消息）→ 组装 prompt
+  3. /api/chat 生成回答（多模型调度）
+  4. 落库记忆：chat:msgs:{sid}（Redis list）+ chat:meta:{sid}（元信息/TTL 7 天）
+  5. 窗口溢出（>20 条）→ LLM 压缩旧对话进滚动摘要 + 裁剪（best-effort）
+```
+
+Redis 不可用时降级为进程内内存实现（`pkg/chatstore.MemoryStore`，重启丢失），不阻塞问答。
+
 ## 五、多模型调度器（ai-wiki-llm `service/scheduler.py`）边界
 
-- **作用域**：`/api/chat`（Go 侧 search / requirement 的文本生成）；
+- **作用域**：`/api/chat`（Go 侧 search / requirement / impact / chat 的文本生成与摘要压缩）；
 - **能力**：低价优先（平均单价升序）、可重试错误降级切换（429/5xx/超时/网络）、401/403 标记不可用、业务错误不切换、Redis 分布式熔断 + RPM/TPM 限流（Lua 滑动窗口，fail-open）、`model_pool.yaml` 热重载、`force_model` / `force_high_quality` / `estimated_tokens` 参数；
 - **明确不做**：embedding（固定模型）、文档生成（离线批处理，走 `LLMService` 单模型）；
 - **模型池配置**：`ai-wiki-llm/model_pool.yaml`（密钥 `${ENV}` 占位），与文档生成的 `OPENAI_API_KEY` / `LLM_MODEL` 是两套独立配置。

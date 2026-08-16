@@ -8,6 +8,7 @@ import (
 
 	"ai-code-wiki/internal/config"
 	"ai-code-wiki/internal/repo"
+	"ai-code-wiki/pkg/chatstore"
 	"ai-code-wiki/pkg/logger"
 	"ai-code-wiki/pkg/taskqueue"
 	"ai-code-wiki/pkg/vector"
@@ -40,6 +41,10 @@ type Service struct {
 	Report      *ReportService
 	Repo        *RepoService
 	Impact      *ImpactService
+	Chat        *ChatService
+
+	// ChatStore 会话记忆存储（Redis 优先，降级内存）
+	ChatStore chatstore.Store
 
 	TaskQueue  taskqueue.TaskQueue // 异步任务队列（SubmitTask 提交，worker 消费）
 	TaskWorker *TaskWorker         // 独立消费协程 Worker（消费解析/向量任务）
@@ -81,6 +86,7 @@ func NewService(db *gorm.DB, cfg *config.Config) (*Service, error) {
 	// 需求分析服务依赖检索服务，先构建检索服务
 	searchSvc := NewSearchService(db, cfg, vc)
 	taskSvc := NewTaskService(db, cfg, vc, queue)
+	chatStore := chatstore.New(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.TTLDays)
 	s := &Service{
 		db:          db,
 		llmBaseURL:  cfg.LLM.BaseURL,
@@ -93,6 +99,8 @@ func NewService(db *gorm.DB, cfg *config.Config) (*Service, error) {
 		Report:      NewReportService(db),
 		Repo:        NewRepoService(db),
 		Impact:      NewImpactService(db, cfg, searchSvc),
+		Chat:        NewChatService(db, cfg, searchSvc, chatStore),
+		ChatStore:   chatStore,
 		TaskQueue:   queue,
 		TaskWorker:  NewTaskWorker(queue, taskSvc, vc, cfg.TaskQueue.MaxRetry, cfg.TaskQueue.Concurrency),
 	}

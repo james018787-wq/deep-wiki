@@ -16,6 +16,13 @@ mysql:
   max_open_conns: 100
   conn_max_lifetime: 3600 # 单位秒
 
+# 会话记忆 Redis（多轮对话存储；未配置地址时降级为进程内内存）
+redis:
+  addr: ""      # redis 连接地址，如 redis:6379（REDIS_ADDR）
+  password: ""  # redis 密码（可选，REDIS_PASSWORD）
+  db: 0         # 逻辑库编号（REDIS_DB）
+  ttl_days: 7   # 会话过期天数（REDIS_TTL_DAYS）
+
 # Git 仓库配置（代码解析任务使用）
 # repo_url 为解析仓库地址，部署时可用 GIT_REPO_URL 覆盖
 git:

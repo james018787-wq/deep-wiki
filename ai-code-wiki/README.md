@@ -1,6 +1,6 @@
 # ai-code-wiki
 
-AI 代码知识库系统。通过 CI 触发的代码解析任务，自动提取仓库内 Go / PHP 源码中的函数级信息，调用大模型生成标准化业务文档，并沉淀模块依赖知识图谱，支撑跨模块 RAG 检索与新产品需求分析。
+AI 代码知识库系统。通过 CI 触发的代码解析任务，自动提取仓库内 Go / PHP 源码中的函数级信息，调用大模型生成标准化业务文档，并沉淀模块依赖知识图谱与函数级调用边，支撑跨模块 RAG 检索、多轮智能问答、迭代影响分析与新产品需求分析。
 
 ## 1. 项目介绍与功能清单
 
@@ -37,6 +37,8 @@ AI 代码知识库系统。通过 CI 触发的代码解析任务，自动提取�
 | 模块依赖图谱 | 上下游查询 / 人工新增 / 删除 | AST 识别 ∪ 人工关系，操作带日志 |
 | RAG 检索 | 自然语言跨模块检索 | Chroma 向量召回 + 模块依赖扩充 |
 | 需求分析 | 需求 → 结构化分析 | 复用检索流水线，LLM 输出 JSON |
+| 多轮智能对话 | 基于 Redis 会话记忆的问答 | 滑动窗口 + 滚动摘要，支持连续追问；前端可切换「需求分析」模式 |
+| 迭代影响分析 | 变更 → 上游/下游影响点 + 设计文档初稿 | 函数级调用边（`function_call_edge`）双向 BFS 传播，LLM 合成设计文档并逐函数落库 `code_change_log` |
 | 多模型调度 | 优先低价 + 故障降级熔断 | 收口于 ai-wiki-llm（Python），Redis 分布式熔断/限流 |
 | 平台能力 | API 密钥鉴权 / request_id 日志 / 健康检查 | MVP 单密钥，统一日志工具 |
 | 异步任务 | 任务队列抽象接口 | 已实现 memory（本地 channel）与 rabbitmq（持久化+手动 ACK），`TASK_QUEUE_DRIVER` 切换 |
@@ -46,7 +48,8 @@ AI 代码知识库系统。通过 CI 触发的代码解析任务，自动提取�
 - 后端：Go 1.22 + Gin + GORM（MySQL 8.0）
 - LLM 微服务：Python 3.11 + FastAPI + LangChain（`ai-wiki-llm`）
 - 向量库：Chroma（HTTP 查询），`pkg/vector` 预留 Milvus/Redis/Faiss 扩展
-- 部署：Docker Compose（mysql / chroma / Go API / Python LLM）
+- 会话记忆：Redis 7（多轮对话 `chatstore` + Python 侧熔断/限流状态）
+- 部署：Docker Compose（mysql / redis / chroma / Go API / Python LLM）
 
 ## 2. 本地开发启动
 
@@ -65,8 +68,9 @@ ai-code-wiki/
 │   ├── router/              # 路由注册
 │   └── service/             # 业务逻辑层
 ├── pkg/
-│   ├── astgo/               # Go 源码 AST 解析
+│   ├── astgo/               # Go 源码 AST 解析（含函数级调用边提取）
 │   ├── astphp/              # PHP 源码简易解析
+│   ├── chatstore/           # 会话记忆存储抽象（Redis 实现 + 内存降级）
 │   ├── common/              # 统一错误码 / 响应 / 工具
 │   ├── filefilter/          # 解析流水线文件过滤规则
 │   ├── git/                 # git 命令封装
@@ -75,7 +79,7 @@ ai-code-wiki/
 │   ├── vector/              # 向量库通用接口
 │   └── webhook/             # webhook 签名校验
 ├── docs/                    # 架构与设计文档（architecture / multi-model-scheduler）
-├── init_sql/init.sql        # 建表脚本（docker 自动导入）
+├── init_sql/init.sql        # 建表脚本（docker 自动导入；增量表见 init_sql/migrate_*.sql）
 ├── docker-compose.yml
 └── Dockerfile
 
@@ -111,11 +115,12 @@ docker compose up -d
 docker compose ps
 ```
 
-Compose 将启动 4 个服务：
+Compose 将启动 5 个服务：
 
 | 服务 | 端口 | 说明 |
 | ---- | ---- | ---- |
 | mysql | 3306 | 数据库，首次启动自动导入 init_sql |
+| redis | 6379 | 会话记忆（多轮对话）+ Python 侧熔断/限流状态 |
 | chroma | 8000 | 向量库 |
 | ai-code-wiki-api | 8080 | Go 后端（带 healthcheck） |
 | ai-wiki-llm | 9000 | Python LLM 微服务 |
@@ -163,6 +168,10 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 | `TASK_QUEUE_NAME` | task_queue.queue_name | ai-code-wiki-task | 任务队列名（RabbitMQ 下自动创建持久化队列） |
 | `TASK_QUEUE_MAX_RETRY` | task_queue.max_retry | 3 | 任务最大重试次数，消费失败自动重投，超过上限标记任务失败 |
 | `TASK_QUEUE_CONCURRENCY` | task_queue.concurrency | 2 | 任务消费协程数（内存与 RabbitMQ 均生效） |
+| `REDIS_ADDR` | redis.addr | 空 | 会话记忆 Redis 地址（如 `redis:6379`）；未配置或不可用时自动降级为进程内内存实现 |
+| `REDIS_PASSWORD` | redis.password | 空 | Redis 密码（可选） |
+| `REDIS_DB` | redis.db | 0 | Redis 逻辑库编号 |
+| `REDIS_TTL_DAYS` | redis.ttl_days | 7 | 会话过期天数（每次写入刷新 TTL） |
 | `FILTER_IGNORE_DIRS` | filter.ignore_dirs | vendor,node_modules,mock,fixture | 解析流水线忽略的目录名（逗号分隔，路径任意层级命中即跳过文件，如第三方依赖/测试数据目录） |
 | `FILTER_IGNORE_FILE_REGEX` | filter.ignore_file_re | `_test\.go$` | 解析流水线忽略的文件正则（逗号分隔，匹配相对路径，如 Go 测试文件 `*_test.go`） |
 | `FILTER_ALLOW_EXTS` | filter.allow_exts | go,php | 解析流水线允许解析的代码文件后缀（逗号分隔，不含点；非业务代码后缀直接跳过） |
@@ -211,6 +220,10 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | POST | `/api/v1/relation/add` | 人工新增依赖（写操作日志） |
 | DELETE | `/api/v1/relation` | 删除依赖（逻辑删除 + 操作日志） |
 | POST | `/api/v1/requirement/analyze` | 需求分析，body: `{user_requirement, force_model?, force_high_quality?}` |
+| POST | `/api/v1/impact/analyze` | 迭代影响分析，body: `{repo_id, branch|functions|query, direction?, max_depth?, version?, session_id?}` → 上游/下游影响点 + 设计文档初稿 + 逐函数变更记录（落库 `code_change_log`） |
+| POST | `/api/v1/chat/ask` | 多轮问答（Redis 会话记忆），body: `{repo_id, query, session_id?, force_model?}` → `{session_id, answer, reference_list, used_model, cost}` |
+| GET | `/api/v1/chat/sessions?repo_id=1` | 会话列表（按更新时间倒序，含消息数） |
+| GET | `/api/v1/chat/history?session_id=xxx` | 会话历史消息（时间正序） |
 | GET | `/api/v1/report/basic` | 基础统计：总文档数 / 人工校正数 / 自动生成数 / 待复核数 / 模块总数 |
 
 ### 4.1 极简前端
@@ -218,6 +231,8 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 `./webstatic` 提供原生 HTML + Vue3 CDN 页面（无构建），由后端 `/webstatic` 静态路由挂载：
 
 - `docs.html` 文档列表（分页 + 模块筛选，点击进入编辑）
+- `chat.html` 智能问答（多轮对话 + 会话列表/新建；可切换「需求分析」模式，粘贴产品修订/需求文档直接得到开发设计建议）
+- `impact.html` 迭代影响分析（分支/自然语言/函数 → 上游/下游影响点三栏 + 开发设计文档初稿 + 逐函数个性化变更记录）
 - `doc-edit.html` 文档编辑/详情（加载现有文档，`PUT /api/v1/doc/:doc_id/edit` 提交、支持重置，可进入历史版本页）
 - `doc-history.html` 文档历史版本（`GET /api/v1/doc/:doc_id/history` 列表 + 快照详情，查看修改前后原始 JSON）
 - `tasks.html` 任务管理（任务列表 / 状态查询 / 触发解析任务）
@@ -240,6 +255,16 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
   -H 'Content-Type: application/json' \
   -d '{"query":"下单支付流程"}'
 
+# 多轮智能问答（首次不带 session_id 自动新建会话，返回后带上可连续追问）
+curl -X POST http://localhost:8080/api/v1/chat/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"repo_id":1,"query":"下单模块的详细逻辑是什么？"}'
+
+# 迭代影响分析（自然语言描述本次迭代变更 → 影响点 + 设计文档初稿）
+curl -X POST http://localhost:8080/api/v1/impact/analyze \
+  -H 'Content-Type: application/json' \
+  -d '{"repo_id":1,"functions":[{"module":"order","func":"CreateOrder"}],"version":"v1.4.0"}'
+
 # RAG 检索（可选覆盖：强制指定模型 / 强制走高配模型）
 curl -X POST http://localhost:8080/api/v1/doc/search \
   -H 'Content-Type: application/json' \
@@ -261,13 +286,15 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
 3. 文档检索与人工校正：RAG 检索、编辑/重置（快照日志）、向量同步
 4. 模块依赖图谱：AST 识别 + 人工关系 + 操作日志
 5. 需求分析：复用检索流水线，结构化 LLM 输出
+6. 迭代影响分析：函数级调用边（`function_call_edge`）+ 双向 BFS 传播 + 设计文档合成落库
+7. 多轮智能对话：Redis 会话记忆（滑动窗口 + 滚动摘要）
 
 ### 5.2 MVP 已知限制
 
 - **PHP 解析**：基于正则的简易实现，不做深度 AST，可能误匹配（注释/字符串规避已处理，匿名函数/泛型等特殊场景见 `pkg/astphp` 注释）。
 - **向量引擎**：默认 Chroma/Milvus 已实现（`VECTOR_DRIVER` 切换），Redis/Faiss 未实现。
 - **LLM 依赖**：文档生成、检索回答、需求分析均依赖外部大模型服务，未内置模型。所有「调模型」能力统一收口于 `ai-wiki-llm`（Python）；RAG 检索/需求分析的文本生成走 `/api/chat` 多模型调度（低价优先、故障自动降级，模型池见 `ai-wiki-llm/model_pool.yaml`），文档生成仍走 ai-wiki-llm 单模型。
-- **Redis**：多模型调度的分布式熔断/限流状态存 Redis（ai-wiki-llm 侧使用）；未配置或 Redis 故障时降级 fail-open（不阻断业务）。
+- **Redis**：两处使用——① Go 多轮对话会话记忆（`pkg/chatstore`，key `chat:meta:*` / `chat:msgs:*`，7 天 TTL）；② ai-wiki-llm 多模型调度的分布式熔断/限流状态。未配置或 Redis 故障时，Go 侧降级为进程内内存会话（重启丢失），Python 侧 fail-open（不阻断业务）。
 - **鉴权**：仅单密钥（`API_SECRET_KEY`），无 RBAC、无用户体系。
 - **任务队列**：已抽象 `pkg/taskqueue` 接口（`SubmitTask`/`ConsumeTask`），默认内存队列，生产可切换 RabbitMQ（`TASK_QUEUE_DRIVER=rabbitmq`）；消费失败自动重试，超过上限标记任务失败。
 - **日志**：仅控制台输出，文件输出已留扩展点（`logger.NewFileSink` / `logger.SetOutput`），未启用。
@@ -338,19 +365,35 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
 | source | 1=AST自动识别 2=人工手动添加 |
 | creator / remark | 创建人 / 备注 |
 
-### 7.4 doc_modify_log 文档人工校正日志
+### 7.4 function_call_edge 函数级调用边表（迭代影响分析地基）
+
+解析流水线按文件增量重建调用边（`task_service.processFile`），跨包调用自动聚合出模块依赖（source=1，已存在人工 source=2 关系时跳过，保持幂等）。
+
+| 字段 | 说明 |
+| ---- | ---- |
+| repo_id / module_name | 所属仓库 / 调用方模块 |
+| caller_file / caller_func | 调用方文件 / 函数 |
+| callee_module / callee_file / callee_func | 被调用方模块 / 文件 / 函数 |
+| call_kind | 1=同包调用 2=跨包调用 |
+| (caller_file, caller_func) | 联合唯一索引（防重复重建；`caller_file` 用 191 前缀避免 utf8mb4 索引超长） |
+
+影响分析在该表上做双向 BFS 传播：改某函数 → 反向找调用它的上游（谁受影响），正向找它调用的下游（牵连谁）。
+
+### 7.5 doc_modify_log 文档人工校正日志
 
 编辑/重置时记录修改前后完整文档 JSON 快照（before_content / after_content），`operate_type`：1=编辑 2=重置。
 
-### 7.5 relation_modify_log 模块依赖关系操作日志
+### 7.6 relation_modify_log 模块依赖关系操作日志
 
 `operate_type`：1=新增 2=编辑 3=删除，记录 operator / remark。
 
-### 7.6 code_change_log 代码迭代变更历史记录
+### 7.7 code_change_log 代码迭代变更历史记录
 
 关联文档的版本变更摘要、业务影响范围、上线注意事项。
 
-### 7.7 task_record 代码解析任务记录表
+> 由迭代影响分析（`/api/v1/impact/analyze`）写入：每次迭代为每个受影响文档生成**个性化**记录（按函数区分 `change_summary` / `business_impact` / `attention`）；可按文档查询迭代变更历史（`GET /api/v1/doc/changelog?doc_id=xxx`）。
+
+### 7.8 task_record 代码解析任务记录表
 
 | 字段 | 说明 |
 | ---- | ---- |

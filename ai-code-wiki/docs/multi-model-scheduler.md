@@ -128,6 +128,7 @@ class Scheduler.chat(system, user, force_model="", force_high_quality=False, est
 - 触发：同一模型连续 `circuit_failure_threshold` 次可重试错误（Lua 原子 INCR+SET）；401/403 直接写 key
 - 成功调用 DEL 计数；到期自动恢复（TTL 熔断，无半开探测）
 - Redis 未配置/故障 → fail-open（记录告警日志，调度仍可运行）
+- 与 Go 侧多轮对话会话记忆（`chat:meta:*` / `chat:msgs:*`）共用同一 Redis，key 命名空间不同互不影响
 
 ## 八、分布式限流（Redis 滑动窗口）
 
