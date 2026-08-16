@@ -1,4 +1,17 @@
 <template>
+  <div class="cosmic-bg" aria-hidden="true">
+    <div class="nebula n1"></div>
+    <div class="nebula n2"></div>
+    <div class="nebula n3"></div>
+    <div class="planet"></div>
+    <div class="stars s-sm"></div>
+    <div class="stars s-md"></div>
+    <div class="stars s-lg"></div>
+    <div class="shoot sh1"></div>
+    <div class="shoot sh2"></div>
+    <div class="shoot sh3"></div>
+    <div class="vignette"></div>
+  </div>
   <div class="login-wrap">
     <div class="login-card">
       <div class="brand-line">
@@ -67,6 +80,97 @@ async function doLogin() {
 </script>
 
 <style scoped>
+/* ============ 宇宙空间背景 ============ */
+.cosmic-bg {
+  position: fixed; inset: 0; z-index: 0; overflow: hidden;
+  background:
+    radial-gradient(1200px 800px at 50% -12%, #1b2a6b 0%, transparent 60%),
+    radial-gradient(1000px 700px at 88% 112%, #14204a 0%, transparent 55%),
+    radial-gradient(700px 500px at 0% 100%, #16204a 0%, transparent 50%),
+    linear-gradient(180deg, #04070f 0%, #080d24 45%, #01040a 100%);
+}
+
+/* 星云（大范围模糊色团，缓慢漂移） */
+.nebula { position: absolute; border-radius: 50%; filter: blur(72px); opacity: .55; mix-blend-mode: screen; }
+.nebula.n1 { width: 540px; height: 440px; left: -8%; top: -8%; background: radial-gradient(circle, rgba(139,92,246,.6), transparent 70%); animation: drift1 26s ease-in-out infinite alternate; }
+.nebula.n2 { width: 620px; height: 480px; right: -12%; bottom: -10%; background: radial-gradient(circle, rgba(34,211,238,.5), transparent 70%); animation: drift2 34s ease-in-out infinite alternate; }
+.nebula.n3 { width: 400px; height: 320px; left: 52%; top: 58%; background: radial-gradient(circle, rgba(236,72,153,.38), transparent 70%); animation: drift3 40s ease-in-out infinite alternate; }
+
+@keyframes drift1 { from { transform: translate(0,0) scale(1); } to { transform: translate(60px, 40px) scale(1.12); } }
+@keyframes drift2 { from { transform: translate(0,0) scale(1); } to { transform: translate(-70px, -50px) scale(1.15); } }
+@keyframes drift3 { from { transform: translate(0,0) scale(1); } to { transform: translate(40px, -60px) scale(1.1); } }
+
+/* 发光星球 */
+.planet {
+  position: absolute; right: 7%; bottom: 10%; width: 230px; height: 230px; border-radius: 50%;
+  background: radial-gradient(circle at 34% 32%, #ffe0b3, #f5a97f 42%, #7c5cff 88%, #5a3fd6 100%);
+  box-shadow: 0 0 90px 26px rgba(139, 92, 246, 0.42), inset -36px -40px 90px rgba(0, 0, 0, 0.55);
+  animation: floaty 13s ease-in-out infinite alternate;
+}
+@keyframes floaty { from { transform: translateY(0); } to { transform: translateY(-26px); } }
+
+/* 星星（三层不同大小/密度，repeating 瓦片铺满） */
+.stars { position: absolute; inset: -60px; pointer-events: none; }
+.stars.s-sm {
+  background-image:
+    radial-gradient(1px 1px at 22px 30px, rgba(255,255,255,.85), transparent 55%),
+    radial-gradient(1px 1px at 96px 128px, rgba(255,255,255,.6), transparent 55%),
+    radial-gradient(1px 1px at 150px 60px, rgba(186,230,253,.8), transparent 55%),
+    radial-gradient(1px 1px at 60px 190px, rgba(255,255,255,.5), transparent 55%),
+    radial-gradient(1px 1px at 190px 220px, rgba(186,230,253,.7), transparent 55%),
+    radial-gradient(1px 1px at 210px 100px, rgba(255,255,255,.65), transparent 55%);
+  background-size: 240px 240px;
+  animation: twinkle 5s ease-in-out infinite;
+}
+.stars.s-md {
+  background-image:
+    radial-gradient(1.4px 1.4px at 40px 45px, rgba(255,255,255,.95), transparent 55%),
+    radial-gradient(1.4px 1.4px at 130px 160px, rgba(199,210,254,.9), transparent 55%),
+    radial-gradient(1.4px 1.4px at 205px 40px, rgba(255,255,255,.85), transparent 55%),
+    radial-gradient(1.4px 1.4px at 80px 230px, rgba(199,210,254,.8), transparent 55%),
+    radial-gradient(1.4px 1.4px at 230px 180px, rgba(255,255,255,.9), transparent 55%);
+  background-size: 280px 280px;
+  animation: twinkle 7s ease-in-out -2s infinite;
+}
+.stars.s-lg {
+  background-image:
+    radial-gradient(2px 2px at 70px 90px, #fff, transparent 60%),
+    radial-gradient(2px 2px at 190px 210px, #fff, transparent 60%),
+    radial-gradient(2px 2px at 250px 70px, rgba(186,230,253,1), transparent 60%),
+    radial-gradient(2px 2px at 30px 260px, #fff, transparent 60%);
+  background-size: 320px 320px;
+  animation: twinkle 9s ease-in-out -4s infinite;
+}
+@keyframes twinkle { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+
+/* 流星 */
+.shoot {
+  position: absolute; width: 2px; height: 2px; border-radius: 50%;
+  background: #fff; filter: drop-shadow(0 0 6px rgba(255,255,255,.9));
+}
+.shoot::after {
+  content: ""; position: absolute; top: 0; left: 0;
+  width: 120px; height: 1px;
+  background: linear-gradient(270deg, rgba(255,255,255,.85), transparent);
+  transform-origin: left center;
+}
+.shoot.sh1 { top: 14%; left: 68%; animation: shoot 7s linear infinite; }
+.shoot.sh2 { top: 38%; left: 18%; animation: shoot 11s linear infinite 3.2s; }
+.shoot.sh3 { top: 8%; left: 40%; animation: shoot 13s linear infinite 6.5s; }
+@keyframes shoot {
+  0% { transform: translate(0, 0); opacity: 0; }
+  4% { opacity: 1; }
+  12% { transform: translate(-240px, 150px); opacity: 0; }
+  100% { transform: translate(-240px, 150px); opacity: 0; }
+}
+
+/* 暗角：保证登录卡片可读 */
+.vignette {
+  position: absolute; inset: 0;
+  background: radial-gradient(1100px 700px at 50% 45%, transparent 55%, rgba(1, 3, 10, 0.55) 100%);
+}
+
+/* ============ 登录卡片 ============ */
 .login-wrap { position: relative; z-index: 1; width: 380px; }
 .login-card {
   background: rgba(18, 26, 44, 0.8);
