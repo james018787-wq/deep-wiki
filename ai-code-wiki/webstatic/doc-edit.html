@@ -5,39 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>文档编辑 - ai-code-wiki</title>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-  <style>
-    body { font-family: "Helvetica Neue", Arial, "PingFang SC", sans-serif; margin: 0; background: #f5f6fa; color: #333; }
-    nav { background: #2c3e50; padding: 10px 24px; display: flex; gap: 24px; align-items: center; }
-    nav a { color: #fff; text-decoration: none; font-weight: 600; }
-    nav span { color: #8aa; font-size: 13px; margin-left: auto; }
-    .container { max-width: 900px; margin: 20px auto; padding: 0 16px; }
-    .panel { background: #fff; padding: 20px 24px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
-    .meta { font-size: 13px; color: #666; margin-bottom: 16px; line-height: 1.9; }
-    .meta b { color: #333; }
-    .form-item { margin-bottom: 14px; }
-    .form-item label { display: block; margin-bottom: 4px; font-size: 13px; color: #555; }
-    .form-item input, .form-item textarea { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; font-family: inherit; }
-    .form-item textarea { min-height: 70px; resize: vertical; }
-    .actions { display: flex; gap: 12px; margin-top: 8px; }
-    .actions button { padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; border: none; }
-    .btn-save { background: #42b983; color: #fff; }
-    .btn-reset { background: #f0f2f5; color: #333; border: 1px solid #ccc !important; }
-    .btn-back { background: transparent; color: #2c3e50; border: 1px solid #ccc !important; }
-    .msg { margin-top: 12px; padding: 8px 12px; border-radius: 4px; font-size: 13px; }
-    .msg.err { background: #fdecea; color: #c62828; }
-    .msg.ok { background: #e8f5e9; color: #2e7d32; }
-    details { margin-top: 16px; font-size: 12px; color: #777; }
-    details pre { background: #fafafa; padding: 10px; border: 1px solid #eee; border-radius: 4px; white-space: pre-wrap; word-break: break-all; }
-  </style>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <nav>
+    <span class="brand">AI·CODE WIKI</span>
     <a href="docs.html">文档列表</a>
     <a href="chat.html">智能问答</a>
     <a href="tasks.html">任务管理</a>
     <a href="impact.html">迭代影响</a>
     <a href="repos.html">仓库管理</a>
-    <span>ai-code-wiki</span>
+    <span class="spacer"></span>
+    <span class="who" data-auth-user></span>
+    <a class="logout" href="javascript:void(0)" onclick="logout()">登出</a>
   </nav>
 
   <div id="app" class="container">
@@ -100,6 +80,8 @@
 
   <script src="config.js"></script>
   <script src="api.js"></script>
+  <script src="auth.js"></script>
+  <script>requireAuth();</script>
   <script>
     Vue.createApp({
       data() {

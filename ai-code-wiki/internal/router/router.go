@@ -6,6 +6,7 @@ import (
 
 	"ai-code-wiki/internal/handler"
 	"ai-code-wiki/internal/middleware"
+	"ai-code-wiki/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -23,14 +24,24 @@ func Register(r *gin.Engine, h *handler.Handler) {
 	// GitLab/Gitee 分支 push 回调，跳过 X-Api-Secret 鉴权，使用 WEBHOOK_SECRET 自有签名鉴权
 	r.POST("/api/v1/webhook/git_push", h.Webhook.GitPush)
 
+	// ========== 登录（公开，不经过鉴权中间件） ==========
+	r.POST("/api/v1/auth/login", h.Auth.Login)
+
 	// 兜底：404 / 405 统一 JSON 返回
 	r.NoRoute(middleware.NotFoundHandler)
 	r.NoMethod(middleware.NoMethodHandler)
 
 	api := r.Group("/api/v1")
-	// 简易 API 密钥鉴权：环境变量 API_SECRET_KEY 为空时自动关闭
-	api.Use(middleware.APIAuth())
+	// 统一鉴权：Bearer Token（用户登录）或 X-Api-Secret（server-to-server）
+	var auth *service.AuthService
+	if h.Service != nil {
+		auth = h.Service.Auth
+	}
+	api.Use(middleware.AuthGuard(auth))
 	{
+		// 当前登录用户 / 登出
+		api.GET("/auth/me", h.Auth.Me)
+		api.POST("/auth/logout", h.Auth.Logout)
 		// ========== 代码仓库注册（多仓库支持） ==========
 		// 注册代码仓库（幂等）
 		api.POST("/repo/register", h.Repo.Register)
@@ -103,8 +114,8 @@ func Register(r *gin.Engine, h *handler.Handler) {
 	// 加 NoCache 中间件避免浏览器强缓存导致页面/脚本不一致（前端 bind mount 实时开发）。
 	web := r.Group("/webstatic", middleware.NoCache())
 	web.Static("", "./webstatic")
-	// 首页默认跳转文档列表页
+	// 首页默认跳转登录页（登录后进入文档列表）
 	r.GET("/", func(c *gin.Context) {
-		c.Redirect(http.StatusFound, "/webstatic/docs.html")
+		c.Redirect(http.StatusFound, "/webstatic/login.html")
 	})
 }

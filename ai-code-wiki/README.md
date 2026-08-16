@@ -39,6 +39,8 @@ AI 代码知识库系统。通过 CI 触发的代码解析任务，自动提取�
 | 需求分析 | 需求 → 结构化分析 | 复用检索流水线，LLM 输出 JSON |
 | 多轮智能对话 | 基于 Redis 会话记忆的问答 | 滑动窗口 + 滚动摘要，支持连续追问；前端可切换「需求分析」模式 |
 | 迭代影响分析 | 变更 → 上游/下游影响点 + 设计文档初稿 | 函数级调用边（`function_call_edge`）双向 BFS 传播，LLM 合成设计文档并逐函数落库 `code_change_log` |
+| 登录鉴权 | 用户登录 / 令牌鉴权 | `user`/`user_token` 表 + bcrypt；Bearer Token（用户）+ X-Api-Secret（server-to-server）双通道 |
+| 科技感前端 | 深空科技主题 + 登录访问 | 共享 `style.css`（玻璃拟态/霓虹渐变/网格光效），所有页面强制登录 |
 | 多模型调度 | 优先低价 + 故障降级熔断 | 收口于 ai-wiki-llm（Python），Redis 分布式熔断/限流 |
 | 平台能力 | API 密钥鉴权 / request_id 日志 / 健康检查 | MVP 单密钥，统一日志工具 |
 | 异步任务 | 任务队列抽象接口 | 已实现 memory（本地 channel）与 rabbitmq（持久化+手动 ACK），`TASK_QUEUE_DRIVER` 切换 |
@@ -172,6 +174,7 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 | `REDIS_PASSWORD` | redis.password | 空 | Redis 密码（可选） |
 | `REDIS_DB` | redis.db | 0 | Redis 逻辑库编号 |
 | `REDIS_TTL_DAYS` | redis.ttl_days | 7 | 会话过期天数（每次写入刷新 TTL） |
+| `AUTH_ADMIN_PASSWORD` | —（auth 服务读取） | admin123 | 默认管理员 `admin` 初始密码（`user` 表为空时创建，仅首次生效） |
 | `FILTER_IGNORE_DIRS` | filter.ignore_dirs | vendor,node_modules,mock,fixture | 解析流水线忽略的目录名（逗号分隔，路径任意层级命中即跳过文件，如第三方依赖/测试数据目录） |
 | `FILTER_IGNORE_FILE_REGEX` | filter.ignore_file_re | `_test\.go$` | 解析流水线忽略的文件正则（逗号分隔，匹配相对路径，如 Go 测试文件 `*_test.go`） |
 | `FILTER_ALLOW_EXTS` | filter.allow_exts | go,php | 解析流水线允许解析的代码文件后缀（逗号分隔，不含点；非业务代码后缀直接跳过） |
@@ -224,12 +227,16 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | POST | `/api/v1/chat/ask` | 多轮问答（Redis 会话记忆），body: `{repo_id, query, session_id?, force_model?}` → `{session_id, answer, reference_list, used_model, cost}` |
 | GET | `/api/v1/chat/sessions?repo_id=1` | 会话列表（按更新时间倒序，含消息数） |
 | GET | `/api/v1/chat/history?session_id=xxx` | 会话历史消息（时间正序） |
+| POST | `/api/v1/auth/login` | 登录（**公开接口**），body: `{username, password}` → `{token, expire_at, username, nickname}` |
+| GET | `/api/v1/auth/me` | 当前登录用户（Bearer Token） |
+| POST | `/api/v1/auth/logout` | 登出（使当前令牌失效） |
 | GET | `/api/v1/report/basic` | 基础统计：总文档数 / 人工校正数 / 自动生成数 / 待复核数 / 模块总数 |
 
 ### 4.1 极简前端
 
-`./webstatic` 提供原生 HTML + Vue3 CDN 页面（无构建），由后端 `/webstatic` 静态路由挂载：
+`./webstatic` 提供原生 HTML + Vue3 CDN 页面（无构建，共享 `style.css` 深空科技主题），由后端 `/webstatic` 静态路由挂载。**除 `login.html` 外全部页面强制登录**（`auth.js` 守卫，未登录跳转登录页）：
 
+- `login.html` 登录页（默认管理员 `admin` / `admin123`，可用 `AUTH_ADMIN_PASSWORD` 覆盖默认密码）
 - `docs.html` 文档列表（分页 + 模块筛选，点击进入编辑）
 - `chat.html` 智能问答（多轮对话 + 会话列表/新建；可切换「需求分析」模式，粘贴产品修订/需求文档直接得到开发设计建议）
 - `impact.html` 迭代影响分析（分支/自然语言/函数 → 上游/下游影响点三栏 + 开发设计文档初稿 + 逐函数个性化变更记录）
@@ -295,7 +302,7 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
 - **向量引擎**：默认 Chroma/Milvus 已实现（`VECTOR_DRIVER` 切换），Redis/Faiss 未实现。
 - **LLM 依赖**：文档生成、检索回答、需求分析均依赖外部大模型服务，未内置模型。所有「调模型」能力统一收口于 `ai-wiki-llm`（Python）；RAG 检索/需求分析的文本生成走 `/api/chat` 多模型调度（低价优先、故障自动降级，模型池见 `ai-wiki-llm/model_pool.yaml`），文档生成仍走 ai-wiki-llm 单模型。
 - **Redis**：两处使用——① Go 多轮对话会话记忆（`pkg/chatstore`，key `chat:meta:*` / `chat:msgs:*`，7 天 TTL）；② ai-wiki-llm 多模型调度的分布式熔断/限流状态。未配置或 Redis 故障时，Go 侧降级为进程内内存会话（重启丢失），Python 侧 fail-open（不阻断业务）。
-- **鉴权**：仅单密钥（`API_SECRET_KEY`），无 RBAC、无用户体系。
+- **鉴权**：用户登录（`user`/`user_token` + bcrypt，Bearer Token，令牌 7 天有效、登出主动失效）+ server-to-server `X-Api-Secret`（`API_SECRET_KEY`）双通道；无 RBAC/权限细分，仅单管理员体系。
 - **任务队列**：已抽象 `pkg/taskqueue` 接口（`SubmitTask`/`ConsumeTask`），默认内存队列，生产可切换 RabbitMQ（`TASK_QUEUE_DRIVER=rabbitmq`）；消费失败自动重试，超过上限标记任务失败。
 - **日志**：仅控制台输出，文件输出已留扩展点（`logger.NewFileSink` / `logger.SetOutput`），未启用。
 - **人工删除依赖与 AST 重加**：人工删除的关系在后续自动任务中"不被 AST 重新添加"的标记逻辑待完善。
@@ -305,9 +312,10 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
 ## 6. 生产部署注意事项
 
 1. **修改默认密码**
+   - 登录默认管理员 `admin` / `admin123`：部署时通过 `AUTH_ADMIN_PASSWORD` 环境变量覆盖初始密码（仅 `user` 表为空时生效），生产务必修改。
    - `docker-compose.yml` 中 `MYSQL_ROOT_PASSWORD`（当前 `Wiki@2026`）、Go 服务 `DB_PASSWORD` 必须改为强密码并保持一致。
 2. **禁止公网直接暴露**
-   - 服务仅应监听内网，通过 Nginx/网关反向代理对外；`/api/v1` 务必配置 `API_SECRET_KEY`（环境变量注入），并限制来源 IP。
+   - 服务仅应监听内网，通过 Nginx/网关反向代理对外；`/api/v1` 已强制 Bearer Token 登录鉴权，server-to-server 场景配置 `API_SECRET_KEY`（环境变量注入），并限制来源 IP。
 3. **配置 API 密钥**
    - 为 Go 服务注入 `API_SECRET_KEY`，同时为 `ai-wiki-llm` 配置真实的 `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `LLM_MODEL`。
 4. **向量库后期切换 Milvus**

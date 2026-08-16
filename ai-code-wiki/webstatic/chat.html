@@ -5,51 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>智能问答 - ai-code-wiki</title>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-  <style>
-    body { font-family: "Helvetica Neue", Arial, "PingFang SC", sans-serif; margin: 0; background: #f5f6fa; color: #333; }
-    nav { background: #2c3e50; padding: 10px 24px; display: flex; gap: 24px; align-items: center; }
-    nav a { color: #fff; text-decoration: none; font-weight: 600; }
-    nav a.active { color: #42b983; }
-    nav span { color: #8aa; font-size: 13px; margin-left: auto; }
-    .container { max-width: 1200px; margin: 20px auto; padding: 0 16px; }
-    .chat-layout { display: flex; gap: 16px; align-items: stretch; height: calc(100vh - 130px); min-height: 420px; }
-    .side { width: 260px; background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.1); padding: 12px; flex-shrink: 0; display: flex; flex-direction: column; overflow-y: auto; }
-    .side h4 { margin: 0 0 10px; }
-    .side .sess { padding: 8px 10px; border-radius: 4px; cursor: pointer; font-size: 13px; margin-bottom: 6px; border: 1px solid #eee; }
-    .side .sess.active { background: #e8f5e9; border-color: #42b983; }
-    .side .sess .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .side .sess .m { color: #999; font-size: 12px; margin-top: 2px; }
-    .side button { width: 100%; padding: 8px; border: none; border-radius: 4px; background: #42b983; color: #fff; cursor: pointer; font-size: 14px; margin-bottom: 8px; }
-    .main { flex: 1; background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.1); display: flex; flex-direction: column; min-width: 0; height: 100%; }
-    .chat-head { padding: 12px 16px; border-bottom: 1px solid #eee; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-    .chat-head select, .chat-head input { padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; }
-    .chat-body { flex: 1; overflow-y: auto; padding: 16px; min-height: 0; }
-    .bubble { margin-bottom: 14px; max-width: 85%; }
-    .bubble .who { font-size: 12px; color: #999; margin-bottom: 4px; }
-    .bubble .text { padding: 10px 12px; border-radius: 6px; font-size: 14px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
-    .bubble.user { margin-left: auto; }
-    .bubble.user .text { background: #42b983; color: #fff; }
-    .bubble.assistant .text { background: #f1f2f5; color: #333; }
-    .bubble .refs { margin-top: 6px; font-size: 12px; color: #888; }
-    .bubble .refs span { display: inline-block; background: #e3f2fd; color: #1565c0; border-radius: 10px; padding: 1px 8px; margin: 2px 4px 0 0; }
-    .bubble .meta { font-size: 12px; color: #bbb; margin-top: 4px; }
-    .chat-input { padding: 12px 16px; border-top: 1px solid #eee; display: flex; gap: 10px; }
-    .chat-input textarea { flex: 1; padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; resize: none; height: 46px; }
-    .chat-input button { padding: 0 20px; border: none; border-radius: 4px; background: #42b983; color: #fff; cursor: pointer; }
-    .chat-input button:disabled { opacity: .6; cursor: not-allowed; }
-    .msg { margin: 10px 0; padding: 8px 12px; border-radius: 4px; font-size: 13px; }
-    .msg.err { background: #fdecea; color: #c62828; }
-    .empty { color: #999; text-align: center; padding: 40px 0; font-size: 14px; }
-  </style>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <nav>
+    <span class="brand">AI·CODE WIKI</span>
     <a href="docs.html">文档列表</a>
     <a href="chat.html" class="active">智能问答</a>
     <a href="impact.html">迭代影响</a>
     <a href="tasks.html">任务管理</a>
     <a href="repos.html">仓库管理</a>
-    <span>ai-code-wiki</span>
+    <span class="spacer"></span>
+    <span class="who" data-auth-user></span>
+    <a class="logout" href="javascript:void(0)" onclick="logout()">登出</a>
   </nav>
 
   <div id="app" class="container">
@@ -75,7 +43,7 @@
             <option value="qa">智能问答（多轮追问）</option>
             <option value="req">需求分析（粘贴产品修订/需求文档）</option>
           </select>
-          <span style="color:#999;font-size:13px;margin-left:auto;">模式：{{ form.mode === 'req' ? '需求→开发设计建议' : '基于代码 Wiki 的 RAG 问答' }}</span>
+          <span class="hint">模式：{{ form.mode === 'req' ? '需求→开发设计建议' : '基于代码 Wiki 的 RAG 问答' }}</span>
         </div>
         <div class="chat-body" ref="body">
           <div class="empty" v-if="!bubbles.length">
@@ -102,6 +70,8 @@
 
   <script src="config.js"></script>
   <script src="api.js"></script>
+  <script src="auth.js"></script>
+  <script>requireAuth();</script>
   <script src="repo.js"></script>
   <script>
     const SESSION_KEY = 'ai-code-wiki-chat-session';

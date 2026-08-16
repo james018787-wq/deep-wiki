@@ -5,56 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>迭代影响分析 - ai-code-wiki</title>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-  <style>
-    body { font-family: "Helvetica Neue", Arial, "PingFang SC", sans-serif; margin: 0; background: #f5f6fa; color: #333; }
-    nav { background: #2c3e50; padding: 10px 24px; display: flex; gap: 24px; align-items: center; }
-    nav a { color: #fff; text-decoration: none; font-weight: 600; }
-    nav a.active { color: #42b983; }
-    nav span { color: #8aa; font-size: 13px; margin-left: auto; }
-    .container { max-width: 1200px; margin: 20px auto; padding: 0 16px; }
-    .panel { background: #fff; padding: 18px 20px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.1); margin-bottom: 20px; }
-    .panel h4 { margin: 0 0 12px; }
-    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-    .row input, .row select, .row textarea { padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; }
-    .row textarea { width: 100%; resize: vertical; }
-    .row button { padding: 6px 16px; border: none; border-radius: 4px; background: #42b983; color: #fff; cursor: pointer; }
-    .row button:disabled { opacity: .6; cursor: not-allowed; }
-    .btn-ghost { background: #fff !important; color: #42b983 !important; border: 1px solid #42b983 !important; }
-    .msg { margin-top: 12px; padding: 8px 12px; border-radius: 4px; font-size: 13px; }
-    .msg.err { background: #fdecea; color: #c62828; }
-    .msg.info { background: #e3f2fd; color: #1565c0; }
-    .msg.ok { background: #e8f5e9; color: #2e7d32; }
-    .impact-grid { display: flex; gap: 14px; align-items: stretch; height: 500px; }
-    .col { flex: 1; border: 1px solid #eee; border-radius: 6px; padding: 12px; background: #fafbfc; min-width: 0; overflow-y: auto; }
-    .col h5 { margin: 0 0 10px; font-size: 14px; display: flex; align-items: center; gap: 6px; }
-    .col.rev { border-top: 3px solid #f39c12; }
-    .col.chg { border-top: 3px solid #e74c3c; }
-    .col.fwd { border-top: 3px solid #3498db; }
-    .func { background: #fff; border: 1px solid #eee; border-radius: 4px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; }
-    .func .name { font-weight: 600; }
-    .func .name.chg { color: #e74c3c; }
-    .func .name.rev { color: #e67e22; }
-    .func .name.fwd { color: #2980b9; }
-    .func .edge { color: #888; font-size: 12px; margin: 4px 0; }
-    .func .sum { color: #666; font-size: 12px; }
-    .depth { display: inline-block; background: #eee; border-radius: 8px; padding: 0 6px; font-size: 11px; color: #666; margin-left: 6px; }
-    .design h5 { margin: 0 0 8px; color: #2c3e50; }
-    .design .sec { margin-bottom: 12px; }
-    .design .sec b { color: #42b983; }
-    .design .sec p { margin: 4px 0 0; white-space: pre-wrap; color: #444; font-size: 13px; line-height: 1.7; }
-    .meta { color: #999; font-size: 12px; margin-top: 8px; }
-    .empty { color: #999; font-size: 13px; text-align: center; padding: 14px 0; }
-    .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #e8f5e9; color: #2e7d32; }
-  </style>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <nav>
+    <span class="brand">AI·CODE WIKI</span>
     <a href="docs.html">文档列表</a>
     <a href="chat.html">智能问答</a>
     <a href="tasks.html">任务管理</a>
     <a href="impact.html" class="active">迭代影响</a>
     <a href="repos.html">仓库管理</a>
-    <span>ai-code-wiki</span>
+    <span class="spacer"></span>
+    <span class="who" data-auth-user></span>
+    <a class="logout" href="javascript:void(0)" onclick="logout()">登出</a>
   </nav>
 
   <div id="app" class="container">
@@ -163,6 +126,8 @@
 
   <script src="config.js"></script>
   <script src="api.js"></script>
+  <script src="auth.js"></script>
+  <script>requireAuth();</script>
   <script src="repo.js"></script>
   <script>
     const SESSION_KEY = 'ai-code-wiki-impact-session';

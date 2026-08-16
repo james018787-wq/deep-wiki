@@ -17,6 +17,7 @@ type Handler struct {
 	Repo        *RepoHandler
 	Impact      *ImpactHandler
 	Chat        *ChatHandler
+	Auth        *AuthHandler
 }
 
 // NewHandler 构建处理器聚合对象。
@@ -31,5 +32,6 @@ func NewHandler(svc *service.Service) *Handler {
 	h.Repo = NewRepoHandler(svc)
 	h.Impact = NewImpactHandler(svc)
 	h.Chat = NewChatHandler(svc)
+	h.Auth = NewAuthHandler(svc)
 	return h
 }

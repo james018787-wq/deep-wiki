@@ -42,6 +42,7 @@ type Service struct {
 	Repo        *RepoService
 	Impact      *ImpactService
 	Chat        *ChatService
+	Auth        *AuthService
 
 	// ChatStore 会话记忆存储（Redis 优先，降级内存）
 	ChatStore chatstore.Store
@@ -100,6 +101,7 @@ func NewService(db *gorm.DB, cfg *config.Config) (*Service, error) {
 		Repo:        NewRepoService(db),
 		Impact:      NewImpactService(db, cfg, searchSvc),
 		Chat:        NewChatService(db, cfg, searchSvc, chatStore),
+		Auth:        NewAuthService(db),
 		ChatStore:   chatStore,
 		TaskQueue:   queue,
 		TaskWorker:  NewTaskWorker(queue, taskSvc, vc, cfg.TaskQueue.MaxRetry, cfg.TaskQueue.Concurrency),
