@@ -36,6 +36,7 @@
             <td>
               <span v-if="r.has_token" class="status ok">已配置</span>
               <span v-else class="status">未配置</span>
+              <button class="btn-ghost" :disabled="busyId === r.id" @click="openTokenDialog(r)" style="margin-left:6px;">设置</button>
               <button v-if="r.has_token" class="btn-danger" :disabled="busyId === r.id" @click="clearToken(r)" style="margin-left:6px;">清除</button>
             </td>
             <td><span class="status" :class="r.status === 1 ? 'ok' : 'err'">{{ r.status === 1 ? '启用' : '停用' }}</span></td>
@@ -52,6 +53,19 @@
       </table>
       <div class="msg err" v-if="error">{{ error }}</div>
     </div>
+
+    <div class="modal-mask" v-if="tokenDialog.show" @click.self="closeTokenDialog">
+      <div class="modal">
+        <h4>设置访问令牌</h4>
+        <p class="modal-desc">仓库：<b>{{ tokenDialog.repo_name }}</b>（私有仓库 HTTPS 鉴权用，加密存储）</p>
+        <input v-model="tokenDialog.token" type="password" placeholder="粘贴访问令牌（GitLab/GitHub/Gitee PAT）" style="width:100%;">
+        <div class="modal-actions">
+          <button class="btn-ghost" @click="closeTokenDialog">取消</button>
+          <button class="btn-save" :disabled="savingToken" @click="saveToken">{{ savingToken ? '保存中...' : '保存' }}</button>
+        </div>
+        <div class="msg err" v-if="tokenDialog.err">{{ tokenDialog.err }}</div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -67,6 +81,8 @@ const busyId = ref(0)
 const list = ref([])
 const loading = ref(false)
 const error = ref('')
+const savingToken = ref(false)
+const tokenDialog = reactive({ show: false, repo_id: 0, repo_name: '', token: '', err: '' })
 
 async function register() {
   if (!form.repo_name.trim() || !form.repo_url.trim()) { error.value = '仓库名与克隆地址不能为空'; return }
@@ -100,6 +116,36 @@ async function clearToken(r) {
     r.has_token = false
   } catch (e) { error.value = '清除令牌失败: ' + e.message }
   finally { busyId.value = 0 }
+}
+
+function openTokenDialog(r) {
+  tokenDialog.show = true
+  tokenDialog.repo_id = r.id
+  tokenDialog.repo_name = r.repo_name
+  tokenDialog.token = ''
+  tokenDialog.err = ''
+}
+
+function closeTokenDialog() {
+  tokenDialog.show = false
+  tokenDialog.token = ''
+  tokenDialog.err = ''
+}
+
+async function saveToken() {
+  const token = tokenDialog.token.trim()
+  if (!token) { tokenDialog.err = '请输入访问令牌'; return }
+  savingToken.value = true
+  tokenDialog.err = ''
+  try {
+    await apiRequest('/repo/' + tokenDialog.repo_id + '/token', {
+      method: 'PUT',
+      body: JSON.stringify({ auth_token: token })
+    })
+    closeTokenDialog()
+    load()
+  } catch (e) { tokenDialog.err = '保存失败: ' + e.message }
+  finally { savingToken.value = false }
 }
 
 async function load() {

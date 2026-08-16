@@ -69,6 +69,31 @@ func (h *RepoHandler) SetStatus(c *gin.Context) {
 	common.Success(c, nil)
 }
 
+// SetToken 设置/更新仓库访问令牌。
+//
+//	PUT /api/v1/repo/:repo_id/token
+//
+// body: {"auth_token": "glpat-xxx"}
+func (h *RepoHandler) SetToken(c *gin.Context) {
+	repoID := common.Str2Int64(c.Param("repo_id"))
+	if repoID <= 0 {
+		common.Fail(c, 400, common.CodeBadRequest, "repo_id 参数错误")
+		return
+	}
+	var req struct {
+		AuthToken string `json:"auth_token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.Fail(c, 400, common.CodeBadRequest, "参数错误: "+err.Error())
+		return
+	}
+	if err := h.svc.Repo.SetToken(c.Request.Context(), repoID, req.AuthToken); err != nil {
+		handleError(c, err)
+		return
+	}
+	common.Success(c, nil)
+}
+
 // ClearToken 清除仓库访问令牌。
 func (h *RepoHandler) ClearToken(c *gin.Context) {
 	repoID := common.Str2Int64(c.Param("repo_id"))

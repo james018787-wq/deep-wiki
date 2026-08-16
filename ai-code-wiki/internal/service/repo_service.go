@@ -85,6 +85,25 @@ func (s *RepoService) ClearToken(ctx context.Context, repoID int64) error {
 	return nil
 }
 
+// SetToken 设置/更新仓库访问令牌（加密存储）。
+func (s *RepoService) SetToken(ctx context.Context, repoID int64, token string) error {
+	_ = ctx
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return common.NewError(common.CodeBadRequest, "访问令牌不能为空")
+	}
+	if _, err := s.repoRepo.GetByID(repoID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return common.NewError(common.CodeNotFound, "仓库不存在")
+		}
+		return common.WrapError(common.CodeInternalError, "查询仓库失败", err)
+	}
+	if err := s.repoRepo.SetAuthToken(repoID, token); err != nil {
+		return common.WrapError(common.CodeInternalError, "保存仓库令牌失败", err)
+	}
+	return nil
+}
+
 // SetStatusReq 启停仓库入参。
 type SetStatusReq struct {
 	Status int8 `json:"status" binding:"required"` // 1=启用 2=停用
