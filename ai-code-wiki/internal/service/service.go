@@ -39,6 +39,7 @@ type Service struct {
 	Requirement *RequirementService
 	Report      *ReportService
 	Repo        *RepoService
+	Impact      *ImpactService
 
 	TaskQueue  taskqueue.TaskQueue // 异步任务队列（SubmitTask 提交，worker 消费）
 	TaskWorker *TaskWorker         // 独立消费协程 Worker（消费解析/向量任务）
@@ -91,6 +92,7 @@ func NewService(db *gorm.DB, cfg *config.Config) (*Service, error) {
 		Requirement: NewRequirementService(searchSvc, cfg),
 		Report:      NewReportService(db),
 		Repo:        NewRepoService(db),
+		Impact:      NewImpactService(db, cfg, searchSvc),
 		TaskQueue:   queue,
 		TaskWorker:  NewTaskWorker(queue, taskSvc, vc, cfg.TaskQueue.MaxRetry, cfg.TaskQueue.Concurrency),
 	}

@@ -77,6 +77,10 @@ func Register(r *gin.Engine, h *handler.Handler) {
 		// 删除模块依赖
 		api.DELETE("/relation", h.Relation.DeleteRelation)
 
+		// ========== 迭代影响分析 ==========
+		// 迭代影响分析（分支 diff 或显式函数 → 上游/下游影响点）
+		api.POST("/impact/analyze", h.Impact.Analyze)
+
 		// ========== 需求分析 ==========
 		// 新产品需求分析
 		api.POST("/requirement/analyze", h.Requirement.Analyze)

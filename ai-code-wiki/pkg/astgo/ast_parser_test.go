@@ -83,16 +83,59 @@ func b() {
 			},
 		},
 		{
-			name: "纯标识符调用不收集",
+			name: "纯标识符调用不收集（内建函数）",
 			src: `package main
 
 func c() {
 	println("x")
+	_ = append([]int{1}, 2)
 }
 `,
-			// println 是 Ident 而非 SelectorExpr，按规则不收集
+			// println/append 为内建函数，按规则不收集（含 CalleeSimple）
 			want: []FuncItem{
-				{FuncName: "c", Callee: nil, Code: "func c() {\n\tprintln(\"x\")\n}"},
+				{FuncName: "c", Callee: nil, Code: "func c() {\n\tprintln(\"x\")\n\t_ = append([]int{1}, 2)\n}"},
+			},
+		},
+		{
+			name: "同包函数调用收集到 CalleeSimple",
+			src: `package order
+
+func CreateOrder() {
+	ValidateOrder()
+}
+
+func ValidateOrder() {
+}
+`,
+			want: []FuncItem{
+				{FuncName: "CreateOrder", CalleeSimple: []string{"ValidateOrder"}, Code: "func CreateOrder() {\n\tValidateOrder()\n}"},
+				{FuncName: "ValidateOrder", Callee: nil, Code: "func ValidateOrder() {\n}"},
+			},
+		},
+		{
+			name: "导入表与跨包调用限定名",
+			src: `package order
+
+import (
+	"fmt"
+	user "user"
+)
+
+func CreateOrder() {
+	u := user.GetUser(1)
+	_ = u
+	fmt.Println(u)
+}
+`,
+			want: []FuncItem{
+				{
+					FuncName:    "CreateOrder",
+					Callee:      []string{"user.GetUser", "fmt.Println"},
+					CalleeSimple: nil,
+					PackageName: "order",
+					Imports:     map[string]string{"fmt": "fmt", "user": "user"},
+					Code:        "func CreateOrder() {\n\tu := user.GetUser(1)\n\t_ = u\n\tfmt.Println(u)\n}",
+				},
 			},
 		},
 		{

@@ -36,6 +36,8 @@ type TaskService struct {
 	docRepo    *repo.CodeFunctionDocRepo
 	moduleRepo *repo.BusinessModuleRepo
 	repoRepo   *repo.CodeRepoRepo        // 代码仓库注册表
+	callEdgeRepo *repo.CallEdgeRepo      // 函数级调用边（迭代影响分析地基）
+	relationRepo *repo.ModuleRelationRepo // 模块依赖图谱（跨包调用聚合 source=1）
 	gitCfg     *config.GitConfig         // git 克隆目录根配置（每个仓库独立子目录）
 	llmBaseURL string                    // Python LLM 服务地址（LLM_SERVICE_URL）
 	llmTimeout time.Duration             // LLM 生成文档调用超时（LLM_TIMEOUT，默认 60s）
@@ -53,6 +55,8 @@ func NewTaskService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient, que
 		docRepo:    newDocRepo(db),
 		moduleRepo: repo.NewBusinessModuleRepo(db),
 		repoRepo:   repo.NewCodeRepoRepo(db),
+		callEdgeRepo: repo.NewCallEdgeRepo(db),
+		relationRepo: repo.NewModuleRelationRepo(db),
 		gitCfg:     &cfg.Git,
 		llmBaseURL: cfg.LLM.BaseURL,
 		llmTimeout: llmCallTimeout(cfg.LLM.Timeout, defaultLLMTimeoutSec),
@@ -315,6 +319,7 @@ func (s *TaskService) processFile(cloneDir string, repoInfo *model.CodeRepo, fil
 
 	// 按扩展名分派解析器
 	var funcs []fileFunc
+	var goItems []astgo.FuncItem
 	if strings.HasSuffix(file, ".php") {
 		// PHP：简易正则解析（不引入重型解析库）
 		items, err := astphp.ParsePHPFile(content)
@@ -330,12 +335,23 @@ func (s *TaskService) processFile(cloneDir string, repoInfo *model.CodeRepo, fil
 		if err != nil {
 			return fmt.Errorf("AST解析失败: %w", err)
 		}
+		goItems = items
 		for i := range items {
 			funcs = append(funcs, fileFunc{Name: items[i].FuncName, Code: items[i].Code})
 		}
 	}
 	if len(funcs) == 0 {
 		return fmt.Errorf("文件内未发现函数")
+	}
+
+	// 提取并重建该文件的函数级调用边（Go 支持，PHP 重建为空清掉旧边）
+	edges := extractCallEdges(repoInfo.ID, file, goItems)
+	if err := s.callEdgeRepo.ReplaceEdgesForFile(repoInfo.ID, file, edges); err != nil {
+		logger.Warn(context.Background(), "重建调用边失败 %s: %v", file, err)
+	}
+	// 跨包调用自动聚合模块级依赖关系（source=1，已有关系不重复创建）
+	if err := s.syncModuleRelationsFromEdges(repoInfo.ID, edges); err != nil {
+		logger.Warn(context.Background(), "聚合模块依赖关系失败 %s: %v", file, err)
 	}
 
 	// 逐个函数生成文档（单函数失败仅记录日志，继续处理）
@@ -349,6 +365,137 @@ func (s *TaskService) processFile(cloneDir string, repoInfo *model.CodeRepo, fil
 	}
 	if ok == 0 {
 		return fmt.Errorf("文件内无函数处理成功")
+	}
+	return nil
+}
+
+// extractCallEdges 从 Go AST 解析结果提取函数级调用边。
+//
+// 规则：
+//  1. CalleeSimple（简单标识符，如 ValidateOrder()）：同包调用。
+//     callee_module=当前文件模块，callee_func=函数名。
+//  2. Callee（SelectorExpr，如 user.GetUser()）：取首段为导入别名，
+//     命中导入表且非标准库时视为跨包调用：
+//     callee_module=导入路径末段（与 moduleNameFromPath 的"首段即模块"约定对应），
+//     callee_func=别名后剩余限定名（GetUser 或 b.Func）。
+//     未命中导入表（局部变量/结构体方法调用，如 r.Context()）直接跳过，无法解析为业务调用边。
+//  3. 标准库（fmt/net/http 等）导入跳过，避免噪音边。
+func extractCallEdges(repoID int64, file string, items []astgo.FuncItem) []*model.FunctionCallEdge {
+	if len(items) == 0 {
+		return nil
+	}
+	module := moduleNameFromPath(file)
+	var edges []*model.FunctionCallEdge
+	for i := range items {
+		it := &items[i]
+		caller := it.FuncName
+		for _, callee := range it.CalleeSimple {
+			if astgo.IsBuiltin(callee) {
+				continue
+			}
+			edges = append(edges, &model.FunctionCallEdge{
+				RepoID:       repoID,
+				CallerModule: module,
+				CallerFile:   file,
+				CallerFunc:   caller,
+				CalleeModule: module,
+				CalleeFunc:   callee,
+				CallKind:     model.CallKindIntraPackage,
+			})
+		}
+		for _, call := range it.Callee {
+			alias, rest := splitSelector(call)
+			path, ok := it.Imports[alias]
+			if !ok || isStdlibImport(path) || rest == "" {
+				continue
+			}
+			edges = append(edges, &model.FunctionCallEdge{
+				RepoID:       repoID,
+				CallerModule: module,
+				CallerFile:   file,
+				CallerFunc:   caller,
+				CalleeModule: importModule(path),
+				CalleeFunc:   rest,
+				CallKind:     model.CallKindCrossPackage,
+			})
+		}
+	}
+	return edges
+}
+
+// splitSelector 将限定调用表达式按首段点拆分为 别名 + 剩余限定名。
+// user.GetUser → ("user", "GetUser")；a.b.Func → ("a", "b.Func")。
+func splitSelector(s string) (alias, rest string) {
+	idx := strings.Index(s, ".")
+	if idx < 0 {
+		return s, ""
+	}
+	return s[:idx], s[idx+1:]
+}
+
+// isStdlibImport 判断是否为 Go 标准库导入。
+// 标准库路径无域名（如 fmt、net/http），但单段路径也可能是仓库本地包（如 user、order），
+// 因此采用"常见标准库白名单"判定，避免把仓库内部包误判为标准库而丢弃调用边。
+func isStdlibImport(path string) bool {
+	return stdlibPackages[path]
+}
+
+// stdlibPackages 常见 Go 标准库路径白名单（命中即视为标准库，跳过调用边）。
+var stdlibPackages = map[string]bool{
+	"fmt": true, "strings": true, "errors": true, "strconv": true, "os": true,
+	"io": true, "bytes": true, "bufio": true, "time": true, "context": true,
+	"sync": true, "sort": true, "math": true, "rand": true, "regexp": true,
+	"log": true, "path": true, "path/filepath": true, "runtime": true,
+	"reflect": true, "unicode": true, "flag": true, "hash": true,
+	"encoding/json": true, "encoding/xml": true, "encoding/base64": true,
+	"encoding/hex": true, "encoding/binary": true, "crypto": true,
+	"crypto/sha1": true, "crypto/sha256": true, "crypto/md5": true,
+	"crypto/rsa": true, "crypto/aes": true, "crypto/tls": true,
+	"net": true, "net/http": true, "net/url": true, "database/sql": true,
+	"mime": true, "html": true, "container/list": true, "io/ioutil": true,
+	"strings2": false,
+}
+
+// importModule 从导入路径推导业务模块名（取路径末段，与仓库内目录结构约定一致）。
+// github.com/foo/order → order；user → user。
+func importModule(path string) string {
+	segs := strings.Split(strings.TrimSuffix(path, "/"), "/")
+	return segs[len(segs)-1]
+}
+
+// syncModuleRelationsFromEdges 将跨包调用边聚合为模块级依赖关系（自动识别 source=1）。
+// 已存在的关系（含人工 source=2）不重复创建，避免覆盖/冲突。
+func (s *TaskService) syncModuleRelationsFromEdges(repoID int64, edges []*model.FunctionCallEdge) error {
+	seen := make(map[string]struct{})
+	for _, e := range edges {
+		if e.CallKind != model.CallKindCrossPackage {
+			continue
+		}
+		if e.CallerModule == e.CalleeModule {
+			continue
+		}
+		key := e.CallerModule + ">" + e.CalleeModule
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		existing, err := s.relationRepo.GetByRelation(repoID, e.CallerModule, e.CalleeModule, common.RelationSyncCall)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if existing != nil {
+			continue
+		}
+		rel := &model.ModuleRelation{
+			RepoID:       repoID,
+			SourceModule: e.CallerModule,
+			TargetModule: e.CalleeModule,
+			RelationType: common.RelationSyncCall,
+			Source:       common.RelationSourceAST,
+		}
+		if err := s.relationRepo.Create(rel); err != nil {
+			return err
+		}
 	}
 	return nil
 }

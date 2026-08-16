@@ -38,7 +38,7 @@ func (r *CodeFunctionDocRepo) ListByModule(repoID int64, moduleName string, page
 // ListManualModified 查询指定仓库所有人工校正文档（content_source = 2）。
 func (r *CodeFunctionDocRepo) ListManualModified(repoID int64, page, pageSize int) ([]*model.CodeFunctionDoc, int64, error) {
 	where := map[string]any{
-		"repo_id":       repoID,
+		"repo_id":        repoID,
 		"content_source": common.ContentSourceManual,
 	}
 	return r.ListByWhere(where, "last_edit_time desc", page, pageSize)
@@ -62,5 +62,18 @@ func (r *CodeFunctionDocRepo) ListByModules(repoID int64, modules []string, limi
 		query = query.Limit(limit)
 	}
 	err := query.Find(&list).Error
+	return list, err
+}
+
+// SearchByKeyword 按关键字模糊检索文档（模块/函数名/文件路径/摘要），限定仓库。
+// 用于自然语言影响分析在向量检索不可用或未召回时的兜底定位。
+func (r *CodeFunctionDocRepo) SearchByKeyword(repoID int64, keyword string, limit int) ([]*model.CodeFunctionDoc, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	like := "%" + keyword + "%"
+	var list []*model.CodeFunctionDoc
+	err := withNotDeleted(r.DB).Where("repo_id = ? AND (module_name LIKE ? OR func_name LIKE ? OR file_path LIKE ? OR summary LIKE ?)",
+		repoID, like, like, like, like).Limit(limit).Find(&list).Error
 	return list, err
 }

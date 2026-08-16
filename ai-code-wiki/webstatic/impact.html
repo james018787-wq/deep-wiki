@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>迭代影响分析 - ai-code-wiki</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    body { font-family: "Helvetica Neue", Arial, "PingFang SC", sans-serif; margin: 0; background: #f5f6fa; color: #333; }
+    nav { background: #2c3e50; padding: 10px 24px; display: flex; gap: 24px; align-items: center; }
+    nav a { color: #fff; text-decoration: none; font-weight: 600; }
+    nav a.active { color: #42b983; }
+    nav span { color: #8aa; font-size: 13px; margin-left: auto; }
+    .container { max-width: 1200px; margin: 20px auto; padding: 0 16px; }
+    .panel { background: #fff; padding: 18px 20px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.1); margin-bottom: 20px; }
+    .panel h4 { margin: 0 0 12px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .row input, .row select, .row textarea { padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; }
+    .row textarea { width: 100%; resize: vertical; }
+    .row button { padding: 6px 16px; border: none; border-radius: 4px; background: #42b983; color: #fff; cursor: pointer; }
+    .row button:disabled { opacity: .6; cursor: not-allowed; }
+    .btn-ghost { background: #fff !important; color: #42b983 !important; border: 1px solid #42b983 !important; }
+    .msg { margin-top: 12px; padding: 8px 12px; border-radius: 4px; font-size: 13px; }
+    .msg.err { background: #fdecea; color: #c62828; }
+    .msg.info { background: #e3f2fd; color: #1565c0; }
+    .msg.ok { background: #e8f5e9; color: #2e7d32; }
+    .impact-grid { display: flex; gap: 14px; align-items: stretch; height: 500px; }
+    .col { flex: 1; border: 1px solid #eee; border-radius: 6px; padding: 12px; background: #fafbfc; min-width: 0; overflow-y: auto; }
+    .col h5 { margin: 0 0 10px; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+    .col.rev { border-top: 3px solid #f39c12; }
+    .col.chg { border-top: 3px solid #e74c3c; }
+    .col.fwd { border-top: 3px solid #3498db; }
+    .func { background: #fff; border: 1px solid #eee; border-radius: 4px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; }
+    .func .name { font-weight: 600; }
+    .func .name.chg { color: #e74c3c; }
+    .func .name.rev { color: #e67e22; }
+    .func .name.fwd { color: #2980b9; }
+    .func .edge { color: #888; font-size: 12px; margin: 4px 0; }
+    .func .sum { color: #666; font-size: 12px; }
+    .depth { display: inline-block; background: #eee; border-radius: 8px; padding: 0 6px; font-size: 11px; color: #666; margin-left: 6px; }
+    .design h5 { margin: 0 0 8px; color: #2c3e50; }
+    .design .sec { margin-bottom: 12px; }
+    .design .sec b { color: #42b983; }
+    .design .sec p { margin: 4px 0 0; white-space: pre-wrap; color: #444; font-size: 13px; line-height: 1.7; }
+    .meta { color: #999; font-size: 12px; margin-top: 8px; }
+    .empty { color: #999; font-size: 13px; text-align: center; padding: 14px 0; }
+    .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #e8f5e9; color: #2e7d32; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="docs.html">文档列表</a>
+    <a href="tasks.html">任务管理</a>
+    <a href="impact.html" class="active">迭代影响</a>
+    <a href="repos.html">仓库管理</a>
+    <span>ai-code-wiki</span>
+  </nav>
+
+  <div id="app" class="container">
+    <!-- 输入区 -->
+    <div class="panel">
+      <h4>迭代影响分析</h4>
+      <div class="row" style="margin-bottom:10px;">
+        <label>仓库：</label>
+        <select v-model="form.repo_id">
+          <option v-for="r in enabledRepos" :key="r.id" :value="r.id">{{ r.repo_name }}</option>
+        </select>
+        <label>方式：</label>
+        <select v-model="form.mode">
+          <option value="nl">自然语言描述变更</option>
+          <option value="branch">分支（自动 diff）</option>
+        </select>
+        <label>方向：</label>
+        <select v-model="form.direction">
+          <option value="both">上游+下游</option>
+          <option value="upstream">仅上游（谁调用我）</option>
+          <option value="downstream">仅下游（我调用谁）</option>
+        </select>
+        <label>深度：</label>
+        <select v-model="form.max_depth">
+          <option :value="1">1 层</option>
+          <option :value="2">2 层</option>
+          <option :value="3">3 层</option>
+        </select>
+      </div>
+      <div class="row" style="margin-bottom:10px;">
+        <input v-if="form.mode === 'branch'" v-model="form.branch" placeholder="分支名，如 feature/impact-demo（对比默认分支）" style="flex:1;min-width:200px;">
+        <textarea v-else v-model="form.query" rows="2" placeholder="用自然语言描述本次迭代要改什么，例如：我要改支付回调的签名校验逻辑（支持多轮追问，会累计上下文）"></textarea>
+      </div>
+      <div class="row">
+        <input v-model="form.version" placeholder="迭代版本号（可选，写入变更日志）" style="flex:1;min-width:160px;">
+        <button :disabled="analyzing" @click="analyze">开始分析</button>
+        <button class="btn-ghost" :disabled="analyzing" @click="newSession">清空会话（新话题）</button>
+      </div>
+      <div class="msg ok" v-if="sessionId && analyzed">会话：{{ sessionId }}（多轮追问将累计变更函数）</div>
+      <div class="msg err" v-if="error">{{ error }}</div>
+    </div>
+
+    <!-- 影响视图 -->
+    <div class="panel" v-if="result">
+      <h4>影响分析结果</h4>
+      <div class="impact-grid">
+        <div class="col rev">
+          <h5>上游调用方 <span class="tag">受改动波及</span></h5>
+          <div v-for="f in result.reverse_impact" :key="'r'+f.module+'.'+f.func" class="func">
+            <div class="name rev">{{ f.module }}.{{ f.func }}<span class="depth">深度{{ f.depth }}</span></div>
+            <div class="edge">{{ f.edge }}</div>
+            <div class="sum">{{ f.summary || '（暂无文档摘要）' }}</div>
+          </div>
+          <div class="empty" v-if="!result.reverse_impact || result.reverse_impact.length === 0">无上游调用方受影响</div>
+        </div>
+        <div class="col chg">
+          <h5>直接修改 <span class="tag">本次迭代</span></h5>
+          <div v-for="f in result.changed" :key="'c'+f.module+'.'+f.func" class="func">
+            <div class="name chg">{{ f.module }}.{{ f.func }}</div>
+            <div class="edge">{{ f.file }}</div>
+            <div class="sum">{{ f.summary || '（暂无文档摘要）' }}</div>
+          </div>
+          <div class="empty" v-if="!result.changed || result.changed.length === 0">无直接修改</div>
+        </div>
+        <div class="col fwd">
+          <h5>下游被调用 <span class="tag">改动牵连</span></h5>
+          <div v-for="f in result.forward_impact" :key="'f'+f.module+'.'+f.func" class="func">
+            <div class="name fwd">{{ f.module }}.{{ f.func }}<span class="depth">深度{{ f.depth }}</span></div>
+            <div class="edge">{{ f.edge }}</div>
+            <div class="sum">{{ f.summary || '（暂无文档摘要）' }}</div>
+          </div>
+          <div class="empty" v-if="!result.forward_impact || result.forward_impact.length === 0">无下游被调用受影响</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 开发设计文档初稿 -->
+    <div class="panel design" v-if="result && result.design_doc">
+      <h4>开发设计文档初稿</h4>
+      <div class="sec">
+        <b>变更摘要</b>
+        <p>{{ result.design_doc.change_summary }}</p>
+      </div>
+      <div class="sec">
+        <b>业务影响范围</b>
+        <p>{{ result.design_doc.business_impact }}</p>
+      </div>
+      <div class="sec">
+        <b>上线注意事项与回归建议</b>
+        <p>{{ result.design_doc.attention }}</p>
+      </div>
+      <div v-if="result.func_changes && result.func_changes.length" class="sec">
+        <b>各函数个性化变更记录</b>
+        <div v-for="fc in result.func_changes" :key="'fc'+fc.module+'.'+fc.func" class="func">
+          <div class="name chg">{{ fc.module }}.{{ fc.func }}</div>
+          <div class="sum"><b>改动：</b>{{ fc.change_summary }}</div>
+          <div class="sum"><b>影响：</b>{{ fc.business_impact }}</div>
+          <div class="sum"><b>注意：</b>{{ fc.attention }}</div>
+        </div>
+      </div>
+      <div class="meta" v-if="result.used_model">模型：{{ result.used_model }} ｜ 本次估算成本：￥{{ result.cost != null ? result.cost.toFixed(5) : '-' }}</div>
+    </div>
+
+    <div class="msg info" v-if="analyzing">分析中（RAG 定位 → 调用图传播 → LLM 合成设计文档）...</div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="api.js"></script>
+  <script src="repo.js"></script>
+  <script>
+    const SESSION_KEY = 'ai-code-wiki-impact-session';
+    Vue.createApp({
+      data() {
+        return {
+          repos: [],
+          form: { repo_id: 0, mode: 'nl', direction: 'both', max_depth: 2, branch: '', query: '', version: '' },
+          sessionId: localStorage.getItem(SESSION_KEY) || genSessionId(),
+          analyzing: false,
+          analyzed: false,
+          result: null,
+          error: ''
+        };
+      },
+      computed: {
+        enabledRepos() {
+          return enabledRepos(this.repos);
+        }
+      },
+      methods: {
+        async initRepos() {
+          try {
+            this.repos = await fetchRepos();
+            this.form.repo_id = defaultRepoId(this.enabledRepos);
+          } catch (e) { this.error = '加载仓库失败: ' + e.message; }
+        },
+        async analyze() {
+          if (!this.form.repo_id) { this.error = '请先选择仓库'; return; }
+          const payload = { repo_id: this.form.repo_id, max_depth: Number(this.form.max_depth) || 2, direction: this.form.direction };
+          if (this.form.mode === 'branch') {
+            if (!this.form.branch.trim()) { this.error = '请输入分支名'; return; }
+            payload.branch = this.form.branch.trim();
+          } else {
+            if (!this.form.query.trim()) { this.error = '请描述本次迭代要改什么'; return; }
+            payload.query = this.form.query.trim();
+          }
+          if (this.form.version.trim()) payload.version = this.form.version.trim();
+          payload.session_id = this.sessionId;
+          this.analyzing = true; this.error = ''; this.result = null;
+          try {
+            const data = await apiRequest('/impact/analyze', { method: 'POST', body: JSON.stringify(payload) });
+            this.result = data;
+            this.analyzed = true;
+            localStorage.setItem(SESSION_KEY, this.sessionId);
+          } catch (e) { this.error = '分析失败: ' + e.message; }
+          finally { this.analyzing = false; }
+        },
+        newSession() {
+          this.sessionId = genSessionId();
+          this.result = null;
+          this.analyzed = false;
+          this.error = '';
+          localStorage.setItem(SESSION_KEY, this.sessionId);
+        }
+      },
+      async mounted() {
+        await this.initRepos();
+      }
+    }).mount('#app');
+
+    function genSessionId() {
+      return 'sess-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+    }
+  </script>
+</body>
+</html>

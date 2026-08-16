@@ -131,6 +131,7 @@ func (s *SearchService) Search(ctx context.Context, req *SearchReq) (*SearchResu
 // repoID 指定检索的仓库范围：<=0 时不限仓库，>0 时仅保留该仓库文档（按库隔离）。
 // 供需求分析等场景复用检索逻辑（禁止重复实现一套检索）。
 // 无相关文档时返回空切片（不报错），由调用方决定后续处理。
+// RetrieveRelatedDocs 检索与 query 相关的业务文档（含跨模块扩充），用于 RAG 问答与需求分析。
 func (s *SearchService) RetrieveRelatedDocs(ctx context.Context, repoID int64, query string) ([]*model.CodeFunctionDoc, error) {
 	// step2: query 转向量 -> 查询 chroma 得到候选 doc_id 列表
 	candidateIDs, err := s.vectorRecall(ctx, query)
@@ -156,6 +157,21 @@ func (s *SearchService) RetrieveRelatedDocs(ctx context.Context, repoID int64, q
 		return nil, err
 	}
 	return recalled, nil
+}
+
+// RetrieveTargetDocs 向量召回候选文档（【不做跨模块扩充】），用于影响分析定位"直接修改"的变更函数种子。
+// 与 RetrieveRelatedDocs 的区别：不经过 expandRecall，避免跨模块关联把无关函数卷入变更集合。
+func (s *SearchService) RetrieveTargetDocs(ctx context.Context, repoID int64, query string) ([]*model.CodeFunctionDoc, error) {
+	// step1: query 转向量 -> 向量召回候选 doc_id
+	candidateIDs, err := s.vectorRecall(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	if len(candidateIDs) == 0 {
+		return nil, nil
+	}
+	// step2: 按 doc_id 从 MySQL 读取候选文档（按仓库过滤）
+	return s.loadDocs(ctx, repoID, candidateIDs)
 }
 
 // vectorRecall 向量初步召回（仅做候选 doc_id 检索，不做跨模块扩充）。
