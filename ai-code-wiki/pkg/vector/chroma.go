@@ -31,6 +31,7 @@ func NewChromaClient(opts Options) *ChromaClient {
 
 // resolveCollectionID 按名称解析集合 UUID（Chroma 0.5.x 起 REST API 使用 UUID 而非名称）。
 // 接口：GET /api/v1/collections/{name}，返回含 id 的集合信息；结果缓存复用。
+// 集合不存在时自动创建（get_or_create 语义），避免全新部署因缺少集合导致向量读写全部失败。
 func (c *ChromaClient) resolveCollectionID() (string, error) {
 	if c.collectionID != "" {
 		return c.collectionID, nil
@@ -38,6 +39,25 @@ func (c *ChromaClient) resolveCollectionID() (string, error) {
 	if c.chromaURL == "" || c.collection == "" {
 		return "", fmt.Errorf("向量库地址或集合未配置")
 	}
+	id, err := c.getCollectionID()
+	if err == nil {
+		c.collectionID = id
+		return id, nil
+	}
+	// 集合不存在（Chroma 对缺失集合 GET 返回 404 或 500）→ 自动创建后重查
+	if cerr := c.createCollection(); cerr != nil {
+		return "", fmt.Errorf("集合 %s 不存在且自动创建失败: %v（GET 错误: %v）", c.collection, cerr, err)
+	}
+	id, err = c.getCollectionID()
+	if err != nil {
+		return "", fmt.Errorf("自动创建集合后仍无法解析集合ID: %w", err)
+	}
+	c.collectionID = id
+	return id, nil
+}
+
+// getCollectionID 按名称查询集合 UUID。
+func (c *ChromaClient) getCollectionID() (string, error) {
 	apiURL := c.chromaURL + "/api/v1/collections/" + url.PathEscape(c.collection)
 	resp, err := httpGet(apiURL, 15*time.Second)
 	if err != nil {
@@ -54,8 +74,23 @@ func (c *ChromaClient) resolveCollectionID() (string, error) {
 	if col.ID == "" {
 		return "", fmt.Errorf("向量集合未找到: %s", c.collection)
 	}
-	c.collectionID = col.ID
 	return col.ID, nil
+}
+
+// createCollection 创建集合（幂等：已存在时 Chroma 返回错误但忽略，语义同 get_or_create）。
+// 集合维度无需在建集时指定，Chroma 在首次写入向量时按 embedding 维度自动固定。
+func (c *ChromaClient) createCollection() error {
+	apiURL := c.chromaURL + "/api/v1/collections"
+	body, err := json.Marshal(map[string]any{"name": c.collection})
+	if err != nil {
+		return fmt.Errorf("创建集合请求序列化失败: %w", err)
+	}
+	resp, err := httpPost(apiURL, body, 15*time.Second)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
 }
 
 // UpsertDoc 写入/覆盖向量：文本向量化后直连 chroma upsert（幂等，新增或覆盖）。
