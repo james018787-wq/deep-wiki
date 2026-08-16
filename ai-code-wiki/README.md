@@ -81,7 +81,7 @@ ai-code-wiki/
 │   ├── vector/              # 向量库通用接口
 │   └── webhook/             # webhook 签名校验
 ├── docs/                    # 架构与设计文档（architecture / multi-model-scheduler）
-├── init_sql/init.sql        # 建表脚本（docker 自动导入；增量表见 init_sql/migrate_*.sql）
+├── init_sql/init.sql        # 建表脚本（docker 自动导入；增量迁移见 init_sql/migrations/）
 ├── docker-compose.yml
 └── Dockerfile
 
