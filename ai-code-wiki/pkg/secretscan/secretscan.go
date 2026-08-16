@@ -59,8 +59,13 @@ var Patterns = []Pattern{
 	},
 	{
 		Type: "password", Risk: "medium",
-		Re:        regexp.MustCompile(`(?i)\b(password|passwd|pwd)\s*["\']?\s*[:=]+\s*['"][^'"]{4,}['"]`),
+		Re:        regexp.MustCompile(`(?i)\b\w*(password|passwd|pwd)\s*["']?\s*[:=]+\s*['"][^'"]{4,}['"]`),
 		Recommend: "硬编码明文密码。改用环境变量 / 密钥管理服务注入，并轮换该密码。",
+	},
+	{
+		Type: "stripe_key", Risk: "high",
+		Re:        regexp.MustCompile(`\bsk_(live|test)_[A-Za-z0-9]{20,}\b`),
+		Recommend: "Stripe 密钥泄露可能被用于盗刷/篡改支付。立即在 Stripe Dashboard 撤销并轮换，改用环境变量注入。",
 	},
 	{
 		Type: "secret", Risk: "medium",
