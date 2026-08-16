@@ -94,6 +94,21 @@ func GetDiffFiles(repoPath, oldCommit, newCommit string) ([]string, error) {
 	return files, nil
 }
 
+// FileExists 判断仓库内相对路径文件是否存在（含路径穿越校验）。
+// 用于区分"文件整体删除"与普通读取失败，支撑幽灵文档清理。
+func FileExists(repoPath, relPath string) bool {
+	root, err := filepath.Abs(repoPath)
+	if err != nil {
+		return false
+	}
+	full := filepath.Join(root, relPath)
+	if rel, err := filepath.Rel(root, full); err != nil || strings.HasPrefix(rel, "..") {
+		return false
+	}
+	info, err := os.Stat(full)
+	return err == nil && !info.IsDir()
+}
+
 // ReadFile 读取仓库内相对路径文件内容。
 // 通过路径校验防止越出仓库根目录。
 func ReadFile(repoPath, relPath string) (string, error) {

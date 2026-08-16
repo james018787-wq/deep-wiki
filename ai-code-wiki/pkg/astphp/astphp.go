@@ -10,8 +10,9 @@ import (
 
 // FuncItem PHP 函数的最小解析切片。
 type FuncItem struct {
-	FuncName string // 函数名称
-	Code     string // 函数源码片段（函数声明 + 完整函数体）
+	FuncName  string // 函数名称
+	StartLine int    // 函数声明起始行号（1 基，用于答案引用定位）
+	Code      string // 函数源码片段（函数声明 + 完整函数体）
 }
 
 // funcRe 匹配 PHP 函数声明：function [&] 函数名 (
@@ -30,8 +31,8 @@ var funcRe = regexp.MustCompile(`\bfunction\s+&?\s*([A-Za-z_\x80-\xff][A-Za-z0-9
 //     无函数体（抽象/接口方法）则跳过。
 //
 // 已知边界（MVP 可接受）：
-//  - 属性声明中字符串值内出现完整函数声明文本仍可能误匹配（极少见）；
-//  - 不包含可见性修饰符（public/private 等），片段从 function 关键字开始。
+//   - 属性声明中字符串值内出现完整函数声明文本仍可能误匹配（极少见）；
+//   - 不包含可见性修饰符（public/private 等），片段从 function 关键字开始。
 func ParsePHPFile(content string) ([]FuncItem, error) {
 	if strings.TrimSpace(content) == "" {
 		return nil, nil
@@ -56,8 +57,9 @@ func ParsePHPFile(content string) ([]FuncItem, error) {
 		}
 
 		items = append(items, FuncItem{
-			FuncName: name,
-			Code:     content[declStart : closeBrace+1],
+			FuncName:  name,
+			StartLine: lineOf(content, declStart),
+			Code:      content[declStart : closeBrace+1],
 		})
 	}
 	return items, nil
@@ -112,6 +114,14 @@ func skipString(s string, i int) int {
 		i++
 	}
 	return len(s)
+}
+
+// lineOf 计算 offset 对应的 1 基行号。
+func lineOf(s string, offset int) int {
+	if offset < 0 || offset > len(s) {
+		return 1
+	}
+	return 1 + strings.Count(s[:offset], "\n")
 }
 
 // inRanges 判断 position 是否落在任一区间内。

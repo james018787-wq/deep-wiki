@@ -304,13 +304,23 @@ func (s *TaskService) cloneDirFor(repoInfo *model.CodeRepo) string {
 
 // fileFunc 解析出的通用函数单元（函数名 + 源码片段）。
 type fileFunc struct {
-	Name string // 函数名称
-	Code string // 函数源码片段
+	Name      string // 函数名称
+	StartLine int    // 函数声明起始行号（1 基）
+	Code      string // 函数源码片段
 }
 
 // processFile 解析单个代码文件，逐个函数生成文档。
 // 按文件后缀选择解析器：.go 走 go ast 解析，.php 走简易正则解析。
 func (s *TaskService) processFile(cloneDir string, repoInfo *model.CodeRepo, file string) error {
+	// 文件整体已删除：清空该文件全部文档（幽灵文档清理）
+	if !git.FileExists(cloneDir, file) {
+		if err := s.cleanupFileDocs(repoInfo, file); err != nil {
+			return fmt.Errorf("清理已删除文件文档失败: %w", err)
+		}
+		logger.Info(context.Background(), "文件已从代码删除，清理其全部文档 %s", file)
+		return nil
+	}
+
 	// 读取仓库内文件内容
 	content, err := git.ReadFile(cloneDir, file)
 	if err != nil {
@@ -327,7 +337,7 @@ func (s *TaskService) processFile(cloneDir string, repoInfo *model.CodeRepo, fil
 			return fmt.Errorf("PHP解析失败: %w", err)
 		}
 		for _, it := range items {
-			funcs = append(funcs, fileFunc{Name: it.FuncName, Code: it.Code})
+			funcs = append(funcs, fileFunc{Name: it.FuncName, StartLine: it.StartLine, Code: it.Code})
 		}
 	} else {
 		// Go：原 ast 解析逻辑（不改动）
@@ -337,9 +347,15 @@ func (s *TaskService) processFile(cloneDir string, repoInfo *model.CodeRepo, fil
 		}
 		goItems = items
 		for i := range items {
-			funcs = append(funcs, fileFunc{Name: items[i].FuncName, Code: items[i].Code})
+			funcs = append(funcs, fileFunc{Name: items[i].FuncName, StartLine: items[i].StartLine, Code: items[i].Code})
 		}
 	}
+
+	// 幽灵文档清理：代码中已删除函数对应文档自动下线（best-effort，失败不阻塞主流程）
+	if err := s.cleanupGhostDocs(repoInfo, file, funcs); err != nil {
+		logger.Warn(context.Background(), "幽灵文档清理失败 %s: %v", file, err)
+	}
+
 	if len(funcs) == 0 {
 		return fmt.Errorf("文件内未发现函数")
 	}
@@ -357,7 +373,7 @@ func (s *TaskService) processFile(cloneDir string, repoInfo *model.CodeRepo, fil
 	// 逐个函数生成文档（单函数失败仅记录日志，继续处理）
 	ok := 0
 	for _, fn := range funcs {
-		if err := s.processFunc(repoInfo, file, fn.Name, fn.Code); err != nil {
+		if err := s.processFunc(repoInfo, file, fn); err != nil {
 			logger.Warn(context.Background(), "处理函数失败 %s.%s: %v", file, fn.Name, err)
 			continue
 		}
@@ -365,6 +381,60 @@ func (s *TaskService) processFile(cloneDir string, repoInfo *model.CodeRepo, fil
 	}
 	if ok == 0 {
 		return fmt.Errorf("文件内无函数处理成功")
+	}
+	return nil
+}
+
+// cleanupGhostDocs 幽灵文档清理：库内该文件已存在文档中，凡当前代码已不存在的函数文档，一律下线。
+// 下线动作 = 写删除操作日志（operate_type=3）+ 逻辑删除 + 删除向量（异步队列）。
+func (s *TaskService) cleanupGhostDocs(repoInfo *model.CodeRepo, file string, funcs []fileFunc) error {
+	current := make(map[string]struct{}, len(funcs))
+	for _, fn := range funcs {
+		if strings.TrimSpace(fn.Name) != "" {
+			current[fn.Name] = struct{}{}
+		}
+	}
+	existing, err := s.docRepo.ListByFile(repoInfo.ID, file)
+	if err != nil {
+		return err
+	}
+	for _, doc := range existing {
+		if _, ok := current[doc.FuncName]; ok {
+			continue
+		}
+		if err := s.removeGhostDoc(doc); err != nil {
+			return err
+		}
+		logger.Info(context.Background(), "幽灵文档下线 doc_id=%d %s.%s 函数已从代码删除", doc.ID, file, doc.FuncName)
+	}
+	return nil
+}
+
+// cleanupFileDocs 文件整体删除时清理其全部文档。
+func (s *TaskService) cleanupFileDocs(repoInfo *model.CodeRepo, file string) error {
+	existing, err := s.docRepo.ListByFile(repoInfo.ID, file)
+	if err != nil {
+		return err
+	}
+	for _, doc := range existing {
+		if err := s.removeGhostDoc(doc); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeGhostDoc 下线单篇幽灵文档：写删除日志 + 逻辑删除 + 投递向量删除任务。
+func (s *TaskService) removeGhostDoc(doc *model.CodeFunctionDoc) error {
+	if err := s.docRepo.RemoveDocWithLog(doc, "system", "函数已从代码中删除，文档自动下线"); err != nil {
+		return err
+	}
+	msg, err := buildVectorDeleteMessage(doc.ID)
+	if err != nil {
+		return err
+	}
+	if err := s.queue.SubmitTask(msg); err != nil {
+		logger.Warn(context.Background(), "向量删除任务投递失败 doc_id=%d err=%v", doc.ID, err)
 	}
 	return nil
 }
@@ -508,7 +578,8 @@ func (s *TaskService) syncModuleRelationsFromEdges(repoID int64, edges []*model.
 //  2. origin_auto_doc 只在【首次创建】时写入，任何情况（源码变更、重新解析）禁止覆盖，
 //     保证"重置回 AI 原始版本"始终可追溯到首次生成内容。
 //  3. 无人工校正标记的函数：覆盖写入文档并同步向量库。
-func (s *TaskService) processFunc(repoInfo *model.CodeRepo, file, funcName, code string) error {
+func (s *TaskService) processFunc(repoInfo *model.CodeRepo, file string, fn fileFunc) error {
+	funcName, code := fn.Name, fn.Code
 	if strings.TrimSpace(funcName) == "" {
 		return fmt.Errorf("函数名为空，跳过")
 	}
@@ -539,6 +610,7 @@ func (s *TaskService) processFunc(repoInfo *model.CodeRepo, file, funcName, code
 	if exists && existing.ContentSource == common.ContentSourceManual {
 		if err := s.docRepo.UpdateFields(existing.ID, map[string]any{
 			"source_code":         code,
+			"func_line":           fn.StartLine,
 			"source_code_changed": common.SourceCodeChanged, // 标记待复核
 		}); err != nil {
 			return fmt.Errorf("更新待复核文档失败: %w", err)
@@ -554,6 +626,7 @@ func (s *TaskService) processFunc(repoInfo *model.CodeRepo, file, funcName, code
 		ModuleName:        moduleName,
 		FilePath:          file,
 		FuncName:          funcName,
+		FuncLine:          fn.StartLine,
 		SourceCode:        code,
 		Summary:           data.Summary,
 		InputDesc:         data.InputDesc,
@@ -570,6 +643,7 @@ func (s *TaskService) processFunc(repoInfo *model.CodeRepo, file, funcName, code
 		// 已存在 AI 文档：覆盖生效字段；origin_auto_doc 只在首次创建时写入，禁止覆盖
 		if err := s.docRepo.UpdateFields(existing.ID, map[string]any{
 			"module_name":         moduleName,
+			"func_line":           fn.StartLine,
 			"source_code":         code,
 			"summary":             data.Summary,
 			"input_desc":          data.InputDesc,

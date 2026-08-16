@@ -17,10 +17,10 @@ func names(items []FuncItem) []string {
 // TestParsePHPFile 表格驱动：验证函数名提取、源码片段、边界规避。
 func TestParsePHPFile(t *testing.T) {
 	cases := []struct {
-		name    string // 用例名
-		src     string // PHP 源码
-		want    []string // 期望函数名（有序）
-		codeIn  string // 期望首个函数片段包含的内容（空则跳过断言）
+		name   string   // 用例名
+		src    string   // PHP 源码
+		want   []string // 期望函数名（有序）
+		codeIn string   // 期望首个函数片段包含的内容（空则跳过断言）
 	}{
 		{
 			name: "简单函数",
@@ -159,8 +159,8 @@ function b() {
 		},
 		{
 			name: "空源码",
-			src:   "",
-			want:  nil,
+			src:  "",
+			want: nil,
 		},
 	}
 
@@ -185,5 +185,31 @@ function b() {
 				}
 			}
 		})
+	}
+}
+
+// TestParsePHPFileStartLine 验证 PHP 函数起始行号捕获（答案引用定位）。
+func TestParsePHPFileStartLine(t *testing.T) {
+	src := `<?php
+
+// 注释行
+function foo() {
+    return 1;
+}
+
+function bar() { return 2; }
+`
+	items, err := ParsePHPFile(src)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("期望 2 个函数, got %d", len(items))
+	}
+	if items[0].FuncName != "foo" || items[0].StartLine != 4 {
+		t.Fatalf("foo 行号不匹配: got %+v", items[0])
+	}
+	if items[1].FuncName != "bar" || items[1].StartLine != 8 {
+		t.Fatalf("bar 行号不匹配: got %+v", items[1])
 	}
 }

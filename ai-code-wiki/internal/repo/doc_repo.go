@@ -1,6 +1,10 @@
 package repo
 
 import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
 	"ai-code-wiki/internal/model"
 	"ai-code-wiki/pkg/common"
 
@@ -23,6 +27,40 @@ func (r *CodeFunctionDocRepo) GetByFileFunc(repoID int64, filePath, funcName str
 		"repo_id":   repoID,
 		"file_path": filePath,
 		"func_name": funcName,
+	})
+}
+
+// ListByFile 按仓库+文件路径列出该文件全部未删除文档（幽灵文档清理：与当前代码函数集合求差）。
+func (r *CodeFunctionDocRepo) ListByFile(repoID int64, filePath string) ([]*model.CodeFunctionDoc, error) {
+	var list []*model.CodeFunctionDoc
+	err := withNotDeleted(r.DB).
+		Where("repo_id = ? AND file_path = ?", repoID, filePath).
+		Order("id asc").Find(&list).Error
+	return list, err
+}
+
+// RemoveDocWithLog 幽灵文档下线：事务内写删除操作日志（operate_type=3）+ 逻辑删除。
+// 保留 before_content 快照供审计/追溯，AfterContent 为空。
+func (r *CodeFunctionDocRepo) RemoveDocWithLog(doc *model.CodeFunctionDoc, operator, remark string) error {
+	before, err := json.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("序列化文档快照失败: %w", err)
+	}
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		logRecord := &model.DocModifyLog{
+			RepoID:        doc.RepoID,
+			DocID:         doc.ID,
+			OperateType:   common.DocOperateDelete,
+			BeforeContent: string(before),
+			AfterContent:  "",
+			Operator:      operator,
+			Remark:        remark,
+		}
+		if err := tx.Create(logRecord).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.CodeFunctionDoc{}).
+			Where("id = ?", doc.ID).Update("is_deleted", 1).Error
 	})
 }
 
@@ -65,15 +103,20 @@ func (r *CodeFunctionDocRepo) ListByModules(repoID int64, modules []string, limi
 	return list, err
 }
 
-// SearchByKeyword 按关键字模糊检索文档（模块/函数名/文件路径/摘要），限定仓库。
-// 用于自然语言影响分析在向量检索不可用或未召回时的兜底定位。
+// SearchByKeyword 按关键字模糊检索文档（模块/函数名/文件路径/业务字段），限定仓库。
+// 混合检索的关键词通道：与向量召回结果做并集去重，覆盖向量召回不到的关键词命中。
 func (r *CodeFunctionDocRepo) SearchByKeyword(repoID int64, keyword string, limit int) ([]*model.CodeFunctionDoc, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	like := "%" + keyword + "%"
+	if strings.TrimSpace(keyword) == "" {
+		return nil, nil
+	}
+	like := "%" + strings.TrimSpace(keyword) + "%"
 	var list []*model.CodeFunctionDoc
-	err := withNotDeleted(r.DB).Where("repo_id = ? AND (module_name LIKE ? OR func_name LIKE ? OR file_path LIKE ? OR summary LIKE ?)",
-		repoID, like, like, like, like).Limit(limit).Find(&list).Error
+	err := withNotDeleted(r.DB).
+		Where("repo_id = ? AND (module_name LIKE ? OR func_name LIKE ? OR file_path LIKE ? OR summary LIKE ? OR input_desc LIKE ? OR output_desc LIKE ? OR process_flow LIKE ? OR risk_point LIKE ?)",
+			repoID, like, like, like, like, like, like, like, like).
+		Limit(limit).Find(&list).Error
 	return list, err
 }

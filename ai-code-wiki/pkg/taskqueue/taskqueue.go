@@ -21,6 +21,8 @@ const (
 	TaskTypePipeline TaskType = "pipeline"
 	// TaskTypeVectorSync 向量同步任务（文档内容转向量写入向量库）。
 	TaskTypeVectorSync TaskType = "vector_sync"
+	// TaskTypeVectorDelete 向量删除任务（幽灵文档下线时删除对应向量）。
+	TaskTypeVectorDelete TaskType = "vector_delete"
 )
 
 // TaskMessage 队列消息载体（必须可 JSON 序列化，保证跨引擎传输）。

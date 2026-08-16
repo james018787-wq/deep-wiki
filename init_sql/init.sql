@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS `code_function_doc` (
   `module_name` varchar(64) NOT NULL COMMENT '所属业务模块',
   `file_path` varchar(512) NOT NULL COMMENT '源码文件路径',
   `func_name` varchar(128) NOT NULL COMMENT '函数名称',
+  `func_line` int DEFAULT 0 COMMENT '函数声明起始行号（答案引用定位）',
   `source_code` text COMMENT '函数源码片段',
   `summary` text COMMENT '一句话业务摘要',
   `input_desc` text COMMENT '入参说明',

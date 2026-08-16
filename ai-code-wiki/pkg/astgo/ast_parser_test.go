@@ -129,12 +129,12 @@ func CreateOrder() {
 `,
 			want: []FuncItem{
 				{
-					FuncName:    "CreateOrder",
-					Callee:      []string{"user.GetUser", "fmt.Println"},
+					FuncName:     "CreateOrder",
+					Callee:       []string{"user.GetUser", "fmt.Println"},
 					CalleeSimple: nil,
-					PackageName: "order",
-					Imports:     map[string]string{"fmt": "fmt", "user": "user"},
-					Code:        "func CreateOrder() {\n\tu := user.GetUser(1)\n\t_ = u\n\tfmt.Println(u)\n}",
+					PackageName:  "order",
+					Imports:      map[string]string{"fmt": "fmt", "user": "user"},
+					Code:         "func CreateOrder() {\n\tu := user.GetUser(1)\n\t_ = u\n\tfmt.Println(u)\n}",
 				},
 			},
 		},
@@ -198,5 +198,33 @@ type T struct{}
 				}
 			}
 		})
+	}
+}
+
+// TestParseGoFileStartLine 验证函数起始行号捕获（答案引用定位）。
+func TestParseGoFileStartLine(t *testing.T) {
+	src := `package main
+
+import "fmt"
+
+// foo 注释
+func foo() {
+	fmt.Println("hi")
+}
+
+func bar() {}
+`
+	items, err := ParseGoFile(src)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("期望 2 个函数, got %d", len(items))
+	}
+	if items[0].FuncName != "foo" || items[0].StartLine != 6 {
+		t.Fatalf("foo 行号不匹配: got %+v", items[0])
+	}
+	if items[1].FuncName != "bar" || items[1].StartLine != 10 {
+		t.Fatalf("bar 行号不匹配: got %+v", items[1])
 	}
 }

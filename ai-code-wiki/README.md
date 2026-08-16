@@ -210,7 +210,7 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | POST | `/api/v1/task/trigger` | 触发代码解析任务（CI 回调），body: `{task_id, branch}` |
 | GET | `/api/v1/task/status?task_id=xxx` | 查询任务状态 |
 | GET | `/api/v1/task/list?page=1&page_size=20` | 任务列表（分页，时间倒序） |
-| POST | `/api/v1/doc/search` | 自然语言跨模块检索，body: `{query, module?, force_model?, force_high_quality?}` |
+| POST | `/api/v1/doc/search` | 自然语言跨模块检索（**混合检索**：向量语义召回 ∪ 关键词精确召回），body: `{query, module?, force_model?, force_high_quality?}` → `{answer, reference_list（含 func_line 行号）, used_model, cost}` |
 | GET | `/api/v1/doc/module/list` | 获取所有业务模块 |
 | GET | `/api/v1/doc/list?module=xxx&page=1&page_size=20` | 分页查询函数文档列表（前端列表页使用） |
 | GET | `/api/v1/doc/:doc_id` | 获取文档详情 |
@@ -226,7 +226,7 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | DELETE | `/api/v1/relation` | 删除依赖（逻辑删除 + 操作日志） |
 | POST | `/api/v1/requirement/analyze` | 需求分析，body: `{user_requirement, force_model?, force_high_quality?}` |
 | POST | `/api/v1/impact/analyze` | 迭代影响分析，body: `{repo_id, branch|functions|query, direction?, max_depth?, version?, session_id?}` → 上游/下游影响点 + 设计文档初稿 + 逐函数变更记录（落库 `code_change_log`） |
-| POST | `/api/v1/chat/ask` | 多轮问答（Redis 会话记忆），body: `{repo_id, query, session_id?, force_model?}` → `{session_id, answer, reference_list, used_model, cost}` |
+| POST | `/api/v1/chat/ask` | 多轮问答（Redis 会话记忆），body: `{repo_id, query, session_id?, force_model?}` → `{session_id, answer, reference_list, used_model, cost}`（引用项含 `doc_id` + `func_line`，前端可跳转源码定位） |
 | GET | `/api/v1/chat/sessions?repo_id=1` | 会话列表（按更新时间倒序，含消息数） |
 | GET | `/api/v1/chat/history?session_id=xxx` | 会话历史消息（时间正序） |
 | POST | `/api/v1/auth/login` | 登录（**公开接口**），body: `{username, password}` → `{token, expire_at, username, nickname}` |
@@ -356,6 +356,12 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
 9. **私有仓库 HTTPS 鉴权**
    - 注册仓库时可携带 `auth_token`（GitLab/Gitee/GitHub Personal Access Token）；clone/fetch/reset 时通过 `GIT_CONFIG_COUNT` 注入 `http.extraheader=AUTHORIZATION: Bearer <token>`，令牌不落盘、不进进程参数；
    - 令牌经 AES-256-GCM 加密后入库（密钥来自 `REPO_TOKEN_KEY`，hex 32 字节），API 出参脱敏（仅 `has_token`）；生产必须配置 `REPO_TOKEN_KEY`，未配置时明文降级仅限本地开发。
+10. **幽灵文档自动清理**
+   - 每次增量解析时，对比「当前代码函数集合」与「库内该文件文档集合」，凡代码中已删除的函数文档自动下线：写删除操作日志（`operate_type=3`，保留 before 快照）+ 逻辑删除 + 删除向量（异步队列）；
+   - 文件整体删除时同样清理该文件全部文档；`code_function_doc.func_line` 记录函数起始行号，供问答引用定位跳转。
+11. **混合检索与引用定位**
+   - `doc/search` 与 `chat/ask` 采用向量语义召回 ∪ 关键词精确召回（MySQL LIKE 覆盖模块/函数名/文件路径/摘要/入参/出参/流程/风险字段）取并集去重，提升召回率；
+   - 回答的 `reference_list` 带 `doc_id` + `func_line`，前端引用可点击跳转 `/doc-source/:doc_id#L{行号}`，源码页自动滚动并高亮该行。
 
 ## 7. 表结构简要说明
 
@@ -379,6 +385,7 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
 | ---- | ---- |
 | id | 主键 |
 | module_name / file_path / func_name | 所属模块 / 文件路径 / 函数名（file_path+func_name+is_deleted 唯一） |
+| func_line | 函数声明起始行号（问答引用定位跳转用） |
 | source_code | 函数源码片段 |
 | summary / input_desc / output_desc / process_flow / rely_modules / risk_point | AI 生成的标准化业务文档字段 |
 | origin_auto_doc | **原始 AI 自动生成文档，永久保存，人工校正/重置均不可覆盖** |

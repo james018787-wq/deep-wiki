@@ -32,6 +32,11 @@ type vectorSyncTaskPayload struct {
 	Content    string `json:"content"`
 }
 
+// vectorDeleteTaskPayload 向量删除任务载荷。
+type vectorDeleteTaskPayload struct {
+	DocID int64 `json:"doc_id"`
+}
+
 // buildPipelineMessage 构建代码解析任务队列消息。
 func buildPipelineMessage(taskID string) (*taskqueue.TaskMessage, error) {
 	payload, err := json.Marshal(pipelineTaskPayload{TaskID: taskID})
@@ -39,6 +44,18 @@ func buildPipelineMessage(taskID string) (*taskqueue.TaskMessage, error) {
 		return nil, fmt.Errorf("解析任务载荷序列化失败: %w", err)
 	}
 	return &taskqueue.TaskMessage{Type: taskqueue.TaskTypePipeline, Payload: payload}, nil
+}
+
+// buildVectorDeleteMessage 构建向量删除任务队列消息。
+func buildVectorDeleteMessage(docID int64) (*taskqueue.TaskMessage, error) {
+	if docID <= 0 {
+		return nil, fmt.Errorf("向量删除任务 doc_id 非法")
+	}
+	payload, err := json.Marshal(vectorDeleteTaskPayload{DocID: docID})
+	if err != nil {
+		return nil, fmt.Errorf("向量删除任务载荷序列化失败: %w", err)
+	}
+	return &taskqueue.TaskMessage{Type: taskqueue.TaskTypeVectorDelete, Payload: payload}, nil
 }
 
 // buildVectorSyncMessage 构建向量同步任务队列消息。
@@ -96,6 +113,7 @@ func (w *TaskWorker) Start(ctx context.Context) {
 	w.consumer.SetOnMaxRetry(w.onMaxRetry)
 	w.consumer.RegisterHandler(taskqueue.TaskTypePipeline, w.handlePipeline)
 	w.consumer.RegisterHandler(taskqueue.TaskTypeVectorSync, w.handleVectorSync)
+	w.consumer.RegisterHandler(taskqueue.TaskTypeVectorDelete, w.handleVectorDelete)
 	w.consumer.Start(ctx, w.concurrency)
 	logger.Info(ctx, "任务消费协程启动 concurrency=%d maxRetry=%d", w.concurrency, w.maxRetry)
 }
@@ -152,6 +170,25 @@ func (w *TaskWorker) handleVectorSync(ctx context.Context, msg *taskqueue.TaskMe
 	}
 	if err := w.vc.UpsertDoc(dv); err != nil {
 		return fmt.Errorf("向量同步失败 doc_id=%d: %w", p.DocID, err)
+	}
+	return nil
+}
+
+// handleVectorDelete 消费向量删除任务：删除指定 doc_id 的向量。
+func (w *TaskWorker) handleVectorDelete(ctx context.Context, msg *taskqueue.TaskMessage) error {
+	var p vectorDeleteTaskPayload
+	if err := json.Unmarshal(msg.Payload, &p); err != nil {
+		return fmt.Errorf("解析向量删除任务载荷失败: %w", err)
+	}
+	if p.DocID <= 0 {
+		return fmt.Errorf("向量删除任务载荷缺少 doc_id")
+	}
+	if w.vc == nil {
+		logger.Warn(ctx, "向量引擎未配置，跳过向量删除 doc_id=%d", p.DocID)
+		return nil
+	}
+	if err := w.vc.DeleteDoc(p.DocID); err != nil {
+		return fmt.Errorf("向量删除失败 doc_id=%d: %w", p.DocID, err)
 	}
 	return nil
 }

@@ -22,6 +22,7 @@ import (
 // 检索与上下文长度控制常量。
 const (
 	TopK          = 10   // 向量初步召回候选数
+	KeywordTopK   = 5    // 关键词召回候选数（混合检索与向量结果取并集）
 	ExpandLimit   = 5    // 每个关联模块扩展召回文档上限
 	PerDocMaxLen  = 300  // 单文档上下文最大字符数（rune）
 	ContextMaxLen = 6000 // 总上下文最大字符数，避免 LLM 超长报错
@@ -63,6 +64,7 @@ type ReferenceDoc struct {
 	DocID      int64  `json:"doc_id"`      // 文档id
 	FilePath   string `json:"file_path"`   // 文件路径
 	FuncName   string `json:"func_name"`   // 函数名称
+	FuncLine   int    `json:"func_line"`   // 函数声明起始行号（引用定位）
 	ModuleName string `json:"module_name"` // 所属模块
 }
 
@@ -133,17 +135,23 @@ func (s *SearchService) Search(ctx context.Context, req *SearchReq) (*SearchResu
 // 无相关文档时返回空切片（不报错），由调用方决定后续处理。
 // RetrieveRelatedDocs 检索与 query 相关的业务文档（含跨模块扩充），用于 RAG 问答与需求分析。
 func (s *SearchService) RetrieveRelatedDocs(ctx context.Context, repoID int64, query string) ([]*model.CodeFunctionDoc, error) {
-	// step2: query 转向量 -> 查询 chroma 得到候选 doc_id 列表
+	// step2: query 转向量 -> 查询 chroma 得到候选 doc_id 列表（混合检索：向量召回 ∪ 关键词召回）
 	candidateIDs, err := s.vectorRecall(ctx, query)
 	if err != nil {
 		return nil, err
 	}
-	if len(candidateIDs) == 0 {
+	// 关键词召回：弥补向量语义召回不到的关键词精确命中（限定仓库时生效）
+	keywordDocs, kwErr := s.keywordRecall(ctx, repoID, query)
+	if kwErr != nil {
+		logger.Warn(ctx, "关键词召回失败（忽略，仅用向量结果）repo_id=%d err=%v", repoID, kwErr)
+	}
+	mergedIDs := mergeCandidateIDs(candidateIDs, keywordDocs)
+	if len(mergedIDs) == 0 {
 		return nil, nil
 	}
 
 	// step3: 根据 doc_id 从 MySQL 读取候选文档（按仓库过滤）
-	candidates, err := s.loadDocs(ctx, repoID, candidateIDs)
+	candidates, err := s.loadDocs(ctx, repoID, mergedIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +165,45 @@ func (s *SearchService) RetrieveRelatedDocs(ctx context.Context, repoID int64, q
 		return nil, err
 	}
 	return recalled, nil
+}
+
+// keywordRecall 关键词召回（MySQL LIKE 兜底通道），限定仓库时生效。
+func (s *SearchService) keywordRecall(ctx context.Context, repoID int64, query string) ([]*model.CodeFunctionDoc, error) {
+	if repoID <= 0 {
+		return nil, nil
+	}
+	docs, err := s.docRepo.SearchByKeyword(repoID, query, KeywordTopK)
+	if err != nil {
+		return nil, err
+	}
+	return docs, nil
+}
+
+// mergeCandidateIDs 合并向量召回与关键词召回候选 doc_id（向量优先、关键词补充、去重）。
+func mergeCandidateIDs(vectorIDs []int64, keywordDocs []*model.CodeFunctionDoc) []int64 {
+	seen := make(map[int64]struct{}, len(vectorIDs)+len(keywordDocs))
+	merged := make([]int64, 0, len(vectorIDs)+len(keywordDocs))
+	for _, id := range vectorIDs {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		merged = append(merged, id)
+	}
+	for _, d := range keywordDocs {
+		if d == nil || d.ID <= 0 {
+			continue
+		}
+		if _, ok := seen[d.ID]; ok {
+			continue
+		}
+		seen[d.ID] = struct{}{}
+		merged = append(merged, d.ID)
+	}
+	return merged
 }
 
 // RetrieveTargetDocs 向量召回候选文档（【不做跨模块扩充】），用于影响分析定位"直接修改"的变更函数种子。
@@ -313,8 +360,8 @@ func buildContextPrompt(docs []*model.CodeFunctionDoc) string {
 		if d == nil {
 			continue
 		}
-		entry := fmt.Sprintf("[%d] 模块:%s 函数:%s 文件:%s\n摘要:%s\n流程:%s\n风险:%s\n",
-			idx, d.ModuleName, d.FuncName, d.FilePath,
+		entry := fmt.Sprintf("[%d] 模块:%s 函数:%s 文件:%s:%d\n摘要:%s\n流程:%s\n风险:%s\n",
+			idx, d.ModuleName, d.FuncName, d.FilePath, d.FuncLine,
 			truncate(d.Summary, PerDocMaxLen),
 			truncate(d.ProcessFlow, PerDocMaxLen),
 			truncate(d.RiskPoint, PerDocMaxLen))
@@ -351,6 +398,7 @@ func toReferenceList(docs []*model.CodeFunctionDoc) []ReferenceDoc {
 			DocID:      d.ID,
 			FilePath:   d.FilePath,
 			FuncName:   d.FuncName,
+			FuncLine:   d.FuncLine,
 			ModuleName: d.ModuleName,
 		})
 	}

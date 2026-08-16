@@ -71,8 +71,28 @@ async function load() {
     src.value = await apiRequest('/doc/' + route.params.id + '/source')
     await nextTick()
     if (code.value) Prism.highlightElement(code.value)
+    scrollToHashLine()
   } catch (e) { error.value = '加载源码失败: ' + e.message }
   finally { loading.value = false }
+}
+
+// 支持 ?/#L{n} 定位到指定行（问答引用跳转：/doc-source/:id#L{行号}）
+function scrollToHashLine() {
+  const m = (window.location.hash || '').match(/^#L(\d+)$/)
+  if (!m) return
+  const ln = parseInt(m[1], 10)
+  if (!ln || !src.value) return
+  nextTick(() => {
+    const panel = document.querySelector('.code-block')
+    const rows = panel ? panel.querySelectorAll('.line-numbers-rows > span') : []
+    if (!panel || !rows.length) return
+    const target = rows[ln - 1]
+    if (!target) return
+    const panelTop = panel.getBoundingClientRect().top
+    const targetTop = target.getBoundingClientRect().top
+    panel.scrollTop += (targetTop - panelTop) - panel.clientHeight / 2
+    target.classList.add('jump-line')
+  })
 }
 
 function close() {
@@ -103,5 +123,9 @@ onMounted(load)
   overflow: auto;
   background: #0a0f1c !important;
   text-shadow: none !important;
+}
+.line-numbers-rows > span.jump-line {
+  background: rgba(250, 204, 21, 0.18);
+  outline: 1px solid rgba(250, 204, 21, 0.35);
 }
 </style>

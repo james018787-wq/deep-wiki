@@ -11,6 +11,7 @@ import (
 // FuncItem 单个 Go 函数的最小解析切片。
 type FuncItem struct {
 	FuncName     string            // 函数名称
+	StartLine    int               // 函数声明起始行号（1 基，用于答案引用定位）
 	Code         string            // 函数源码片段（完整函数体）
 	Callee       []string          // 调用函数列表（SelectorExpr 形式，如 http.Get、user.GetUser）
 	CalleeSimple []string          // 简单标识符调用列表（同包函数调用，如 ValidateOrder）
@@ -43,6 +44,7 @@ func ParseGoFile(fileContent string) ([]FuncItem, error) {
 		simple, selector := collectCallees(fn.Body)
 		items = append(items, FuncItem{
 			FuncName:     fn.Name.Name,
+			StartLine:    fset.Position(fn.Pos()).Line,
 			Code:         extractSource(fset, fileContent, fn),
 			Callee:       selector,
 			CalleeSimple: simple,

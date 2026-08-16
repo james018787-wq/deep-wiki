@@ -30,7 +30,13 @@
             <div class="who">{{ b.role === 'user' ? '我' : 'AI' }}</div>
             <div class="text">{{ b.content }}</div>
             <div class="refs" v-if="b.refs && b.refs.length">
-              <span v-for="(r, j) in b.refs" :key="j">{{ r.module_name ? r.module_name + '.' + r.func_name : (r.func_name + (r.file_path ? '（' + r.file_path + '）' : '')) }}</span>
+              <template v-for="(r, j) in b.refs" :key="j">
+                <a v-if="r.doc_id"
+                   :href="'/doc-source/' + r.doc_id + (r.func_line ? '#L' + r.func_line : '')"
+                   :title="(r.module_name ? r.module_name + '.' + r.func_name : r.func_name) + '（' + r.file_path + ':' + (r.func_line || '?') + '）'"
+                   target="_blank" @click.stop>{{ r.module_name ? r.module_name + '.' + r.func_name : r.func_name }}</a>
+                <span v-else>{{ r.module_name ? r.module_name + '.' + r.func_name : (r.func_name + (r.file_path ? '（' + r.file_path + '）' : '')) }}</span>
+              </template>
             </div>
             <div class="meta" v-if="b.meta">{{ b.meta }}</div>
           </div>
