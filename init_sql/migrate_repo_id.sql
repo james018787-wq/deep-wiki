@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS `code_repo` (
   `repo_url` varchar(512) NOT NULL COMMENT '克隆地址',
   `default_branch` varchar(128) NOT NULL DEFAULT 'main' COMMENT '默认分支（增量diff基线）',
   `description` varchar(512) DEFAULT '' COMMENT '仓库说明',
+  `auth_token` varchar(512) NOT NULL DEFAULT '' COMMENT '仓库访问令牌（AES-GCM 加密存储，私有仓库 HTTPS 鉴权）',
   `status` tinyint NOT NULL DEFAULT 1 COMMENT '1启用 2停用',
   `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
   `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
