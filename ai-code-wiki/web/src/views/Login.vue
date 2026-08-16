@@ -3,7 +3,10 @@
     <div class="nebula n1"></div>
     <div class="nebula n2"></div>
     <div class="nebula n3"></div>
-    <div class="planet"></div>
+    <div class="planet p1"></div>
+    <div class="planet p2"></div>
+    <div class="planet p3"></div>
+    <div class="planet p4"></div>
     <div class="stars s-sm"></div>
     <div class="stars s-md"></div>
     <div class="stars s-lg"></div>
@@ -100,14 +103,39 @@ async function doLogin() {
 @keyframes drift2 { from { transform: translate(0,0) scale(1); } to { transform: translate(-70px, -50px) scale(1.15); } }
 @keyframes drift3 { from { transform: translate(0,0) scale(1); } to { transform: translate(40px, -60px) scale(1.1); } }
 
-/* 发光星球 */
+/* 星球（多个不同大小/位置/远近，营造纵深） */
 .planet {
-  position: absolute; right: 7%; bottom: 10%; width: 230px; height: 230px; border-radius: 50%;
+  position: absolute; border-radius: 50%;
   background: radial-gradient(circle at 34% 32%, #ffe0b3, #f5a97f 42%, #7c5cff 88%, #5a3fd6 100%);
-  box-shadow: 0 0 90px 26px rgba(139, 92, 246, 0.42), inset -36px -40px 90px rgba(0, 0, 0, 0.55);
-  animation: floaty 13s ease-in-out infinite alternate;
 }
-@keyframes floaty { from { transform: translateY(0); } to { transform: translateY(-26px); } }
+/* 右下主星球：放远变小、光晕减淡 */
+.planet.p1 {
+  right: 6%; bottom: 8%; width: 150px; height: 150px;
+  box-shadow: 0 0 60px 16px rgba(139, 92, 246, 0.28), inset -26px -30px 70px rgba(0, 0, 0, 0.55);
+  animation: floaty 15s ease-in-out infinite alternate;
+}
+/* 左上：中号，青色偏冷 */
+.planet.p2 {
+  left: 10%; top: 14%; width: 110px; height: 110px;
+  background: radial-gradient(circle at 35% 33%, #c7f0ff, #7fd4ff 45%, #4a6cf7 90%);
+  box-shadow: 0 0 46px 12px rgba(56, 189, 248, 0.26), inset -20px -22px 55px rgba(0, 0, 0, 0.5);
+  animation: floaty 12s ease-in-out -3s infinite alternate;
+}
+/* 右上：小号，暖橙 */
+.planet.p3 {
+  right: 22%; top: 20%; width: 68px; height: 68px;
+  background: radial-gradient(circle at 36% 34%, #ffe6c2, #ffb86b 50%, #e06b3a 92%);
+  box-shadow: 0 0 30px 8px rgba(255, 184, 107, 0.25), inset -12px -14px 34px rgba(0, 0, 0, 0.5);
+  animation: floaty 10s ease-in-out -6s infinite alternate;
+}
+/* 左下：迷你，暗紫 */
+.planet.p4 {
+  left: 26%; bottom: 16%; width: 44px; height: 44px;
+  background: radial-gradient(circle at 36% 34%, #e4d7ff, #a78bfa 55%, #6d4fd6 95%);
+  box-shadow: 0 0 20px 5px rgba(167, 139, 250, 0.22), inset -8px -9px 22px rgba(0, 0, 0, 0.5);
+  animation: floaty 9s ease-in-out -1s infinite alternate;
+}
+@keyframes floaty { from { transform: translateY(0); } to { transform: translateY(-24px); } }
 
 /* 星星（三层不同大小/密度，repeating 瓦片铺满） */
 .stars { position: absolute; inset: -60px; pointer-events: none; }
