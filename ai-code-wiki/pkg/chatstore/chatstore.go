@@ -38,6 +38,8 @@ type Store interface {
 	Trim(sessionID string, keepN int) error
 	// ListSessions 列出指定仓库的会话，按更新时间倒序。
 	ListSessions(repoID int64) ([]*SessionMeta, error)
+	// DeleteSession 删除会话（元信息 + 全部消息），不存在时视为成功。
+	DeleteSession(sessionID string) error
 	Close() error
 }
 

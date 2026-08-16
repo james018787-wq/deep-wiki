@@ -72,6 +72,22 @@ func (h *ChatHandler) History(c *gin.Context) {
 	common.Success(c, msgs)
 }
 
+// DeleteSession 删除会话。
+//
+//	DELETE /api/v1/chat/session?session_id=xxx
+func (h *ChatHandler) DeleteSession(c *gin.Context) {
+	sessionID := c.Query("session_id")
+	if sessionID == "" {
+		common.Fail(c, 400, common.CodeBadRequest, "session_id 参数错误")
+		return
+	}
+	if err := h.svc.Chat.DeleteSession(c.Request.Context(), sessionID); err != nil {
+		handleError(c, err)
+		return
+	}
+	common.Success(c, nil)
+}
+
 func parseInt64(s string) int64 {
 	n, _ := strconv.ParseInt(s, 10, 64)
 	return n

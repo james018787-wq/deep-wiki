@@ -125,6 +125,8 @@ func Register(r *gin.Engine, h *handler.Handler) {
 		api.GET("/chat/sessions", h.Chat.ListSessions)
 		// 会话历史消息
 		api.GET("/chat/history", h.Chat.History)
+		// 删除会话（元信息 + 消息）
+		api.DELETE("/chat/session", h.Chat.DeleteSession)
 
 		// ========== 需求分析 ==========
 		// 新产品需求分析

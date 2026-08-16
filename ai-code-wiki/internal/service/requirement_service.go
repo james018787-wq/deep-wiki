@@ -32,10 +32,10 @@ func NewRequirementService(search *SearchService, cfg *config.Config) *Requireme
 
 // AnalyzeReq 新产品需求分析入参。
 type AnalyzeReq struct {
-	RepoID           int64  `json:"repo_id" binding:"required"`   // 所属仓库id（按库隔离检索）
+	RepoID           int64  `json:"repo_id" binding:"required"`          // 所属仓库id（按库隔离检索）
 	Requirement      string `json:"user_requirement" binding:"required"` // 用户业务需求文本
-	ForceModel       string `json:"force_model"`                   // 可选：强制指定模型（不降级/不熔断/不限流）
-	ForceHighQuality bool   `json:"force_high_quality"`            // 可选：仅用高配模型（过滤低价模型）
+	ForceModel       string `json:"force_model"`                         // 可选：强制指定模型（不降级/不熔断/不限流）
+	ForceHighQuality bool   `json:"force_high_quality"`                  // 可选：仅用高配模型（过滤低价模型）
 }
 
 // RelatedFunction 需求涉及的函数文档。
@@ -119,7 +119,26 @@ func (s *RequirementService) Analyze(ctx context.Context, req *AnalyzeReq) (*Ana
 	// 解析 LLM 输出 JSON（容错处理）
 	parsed, parseErr := parseAnalyzeJSON(raw)
 	if parseErr != nil {
-		// 解析失败：降级为基于真实召回文档的兜底结果，保证接口始终有返回
+		// 首次解析失败：记录原始输出便于诊断，并用更严格的指令重试一次
+		logger.Warn(ctx, "[requirement] 首次 JSON 解析失败，重试一次: %v", parseErr)
+		logger.Info(ctx, "[requirement] 首次原始输出(截断): %.1200s", raw)
+		retryUser := user + "\n\n【重要】请严格只输出一个合法 JSON 对象，不要包含任何 markdown 代码块、解释或前后缀文本。"
+		if sched2, err2 := chatLLM(ctx, s.llmBaseURL, s.chatTimeout, system, retryUser,
+			req.ForceModel, req.ForceHighQuality, estimated); err2 == nil {
+			if p2, e2 := parseAnalyzeJSON(sched2.Answer); e2 == nil {
+				sched = sched2
+				raw = sched2.Answer
+				parsed = p2
+				parseErr = nil
+			} else {
+				logger.Warn(ctx, "[requirement] 重试后仍解析失败: %v；原始输出(截断): %.1200s", e2, sched2.Answer)
+			}
+		} else {
+			logger.Warn(ctx, "[requirement] 重试调用失败: %v", err2)
+		}
+	}
+	if parseErr != nil {
+		// 仍失败：降级为基于真实召回文档的兜底结果，保证接口始终有返回
 		fb := fallbackAnalyzeResult(docs)
 		fb.UsedModel = sched.UsedModel
 		fb.SwitchCount = sched.SwitchCount
@@ -185,31 +204,83 @@ type analyzeLLMResult struct {
 }
 
 // parseAnalyzeJSON 容错解析 LLM 输出：
-//  1. 去除 ```json``` 代码块包裹；
-//  2. 提取首个 { 到最后一个 } 的 JSON 子串；
-//  3. 严格按结构体反序列化。
+//  1. 直接整体解析；
+//  2. 去除 ```json``` 代码块包裹后解析；
+//  3. 花括号配平提取候选 JSON 对象（容忍前后多余文本）。
 func parseAnalyzeJSON(raw string) (*analyzeLLMResult, error) {
 	text := strings.TrimSpace(raw)
 	if text == "" {
 		return nil, fmt.Errorf("LLM输出为空")
 	}
-	// 去除 markdown 代码块包裹
+	// 1. 整体直接解析
+	if out, err := tryParseAnalyzeJSON(text); err == nil {
+		return out, nil
+	}
+	// 2. 去除 markdown 代码块包裹
 	if m := jsonBlockRe.FindStringSubmatch(text); len(m) > 1 {
-		text = strings.TrimSpace(m[1])
+		if out, err := tryParseAnalyzeJSON(strings.TrimSpace(m[1])); err == nil {
+			return out, nil
+		}
 	}
-	// 提取 JSON 对象子串，容忍前后多余文本
-	start := strings.Index(text, "{")
-	end := strings.LastIndex(text, "}")
-	if start < 0 || end <= start {
-		return nil, fmt.Errorf("LLM输出中未找到JSON对象")
+	// 3. 花括号配平提取（容忍前后多余文本/代码块）
+	for _, seg := range extractBalancedJSON(text) {
+		if out, err := tryParseAnalyzeJSON(seg); err == nil {
+			return out, nil
+		}
 	}
-	text = text[start : end+1]
+	return nil, fmt.Errorf("LLM输出未解析出合法JSON对象")
+}
 
+// tryParseAnalyzeJSON 严格按结构体解析单个文本片段。
+func tryParseAnalyzeJSON(text string) (*analyzeLLMResult, error) {
 	var out analyzeLLMResult
 	if err := json.Unmarshal([]byte(text), &out); err != nil {
-		return nil, fmt.Errorf("JSON解析失败: %w", err)
+		return nil, err
 	}
 	return &out, nil
+}
+
+// extractBalancedJSON 用花括号配平扫描文本，返回所有候选 JSON 对象子串
+// （从 { 开始配平到匹配的 }，字符串内的大括号不参与配平）。
+func extractBalancedJSON(text string) []string {
+	var segs []string
+	depth := 0
+	start := -1
+	inStr := false
+	esc := false
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		switch {
+		case inStr:
+			if esc {
+				esc = false
+				continue
+			}
+			if c == '\\' {
+				esc = true
+				continue
+			}
+			if c == '"' {
+				inStr = false
+			}
+		case c == '"':
+			inStr = true
+		case c == '{':
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		case c == '}':
+			if depth > 0 {
+				depth--
+				if depth == 0 && start >= 0 {
+					segs = append(segs, text[start:i+1])
+					start = -1
+				}
+			}
+		}
+	}
+	return segs
 }
 
 // fallbackAnalyzeResult LLM 输出解析失败时的兜底结果，基于真实召回文档生成。

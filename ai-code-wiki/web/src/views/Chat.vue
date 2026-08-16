@@ -7,6 +7,7 @@
         <div v-for="s in sessions" :key="s.session_id" class="sess" :class="{active: s.session_id === sessionId}" @click="openSession(s)">
           <div class="t">{{ s.title || '未命名会话' }}</div>
           <div class="m">{{ fmtTime(s.updated_at) }} ｜ {{ s.message_count }} 条</div>
+          <button class="del" :disabled="s.deleting" @click.stop="removeSession(s)">删除</button>
         </div>
         <div class="empty" v-if="!sessions.length" style="padding:10px 0;">暂无会话</div>
       </div>
@@ -111,6 +112,18 @@ function newSession() {
   bubbles.value = []
   error.value = ''
   localStorage.removeItem(SESSION_KEY)
+}
+
+async function removeSession(s) {
+  if (!confirm('确认删除会话「' + (s.title || '未命名会话') + '」？')) return
+  s.deleting = true
+  error.value = ''
+  try {
+    await apiRequest('/chat/session?session_id=' + encodeURIComponent(s.session_id), { method: 'DELETE' })
+    sessions.value = sessions.value.filter(x => x.session_id !== s.session_id)
+    if (sessionId.value === s.session_id) newSession()
+  } catch (e) { error.value = '删除会话失败: ' + e.message }
+  finally { s.deleting = false }
 }
 
 async function send() {

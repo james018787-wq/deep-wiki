@@ -98,5 +98,14 @@ func (s *MemoryStore) ListSessions(repoID int64) ([]*SessionMeta, error) {
 	return out, nil
 }
 
+// DeleteSession 删除会话（元信息 + 全部消息），幂等。
+func (s *MemoryStore) DeleteSession(sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.metas, sessionID)
+	delete(s.messages, sessionID)
+	return nil
+}
+
 // Close 无操作。
 func (s *MemoryStore) Close() error { return nil }

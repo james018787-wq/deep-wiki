@@ -171,6 +171,20 @@ func (s *ChatService) History(ctx context.Context, sessionID string) ([]chatstor
 	return msgs, nil
 }
 
+// DeleteSession 删除指定会话（元信息 + 全部消息，幂等）。
+func (s *ChatService) DeleteSession(ctx context.Context, sessionID string) error {
+	_ = ctx
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return common.NewError(common.CodeBadRequest, "session_id 不能为空")
+	}
+	if err := s.chatStore.DeleteSession(sessionID); err != nil {
+		return common.WrapError(common.CodeInternalError, "删除会话失败", err)
+	}
+	logger.Info(ctx, "[chat] 会话已删除 session=%s", sessionID)
+	return nil
+}
+
 // loadOrCreateSession 读取已有会话或新建会话。
 func (s *ChatService) loadOrCreateSession(req *ChatAskReq, query string, now int64) (*chatstore.SessionMeta, error) {
 	if req.SessionID != "" {

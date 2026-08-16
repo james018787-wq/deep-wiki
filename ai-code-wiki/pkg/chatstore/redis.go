@@ -173,6 +173,13 @@ func (s *RedisStore) ListSessions(repoID int64) ([]*SessionMeta, error) {
 	return out, nil
 }
 
+// DeleteSession 删除会话（元信息 + 全部消息），幂等。
+func (s *RedisStore) DeleteSession(sessionID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return s.client.Del(ctx, metaKey(sessionID), msgsKey(sessionID)).Err()
+}
+
 // Close 关闭连接。
 func (s *RedisStore) Close() error { return s.client.Close() }
 
