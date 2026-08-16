@@ -3,6 +3,8 @@ package router
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"ai-code-wiki/internal/handler"
@@ -11,6 +13,26 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// distRoot 前端构建产物根目录。
+const distRoot = "./web/dist"
+
+// distFile 解析 URL 路径对应的 dist 文件；不存在或越界时返回空串（走 SPA fallback）。
+func distFile(urlPath string) string {
+	root, err := filepath.Abs(distRoot)
+	if err != nil {
+		return ""
+	}
+	full := filepath.Join(root, filepath.Clean(urlPath))
+	rel, err := filepath.Rel(root, full)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return ""
+	}
+	if info, err := os.Stat(full); err != nil || info.IsDir() {
+		return ""
+	}
+	return full
+}
 
 // Register 注册全部路由，统一前缀 /api/v1。
 func Register(r *gin.Engine, h *handler.Handler) {
@@ -29,12 +51,16 @@ func Register(r *gin.Engine, h *handler.Handler) {
 	r.POST("/api/v1/auth/login", h.Auth.Login)
 
 	// 兜底：404 / 405 统一 JSON 返回
-	// 前端 SPA history 模式 fallback：非 /api、非 /assets 的 GET 请求回退到 index.html，
-	// 保证刷新/直达深层路由不 404。
+	// 前端 SPA history 模式 fallback：
+	//   - 非 /api 的 GET：若 dist 目录中存在对应文件（如 /logo.svg、/assets/xx.js）则直接返回，
+	//     否则回退到 index.html（vue-router history 刷新/直达深层路由不 404）。
+	//   - /api 或非 GET：返回 404/405 JSON。
 	r.NoRoute(middleware.NoCache(), func(c *gin.Context) {
-		if c.Request.Method == http.MethodGet &&
-			!strings.HasPrefix(c.Request.URL.Path, "/api/") &&
-			!strings.HasPrefix(c.Request.URL.Path, "/assets/") {
+		if c.Request.Method == http.MethodGet && !strings.HasPrefix(c.Request.URL.Path, "/api/") {
+			if file := distFile(c.Request.URL.Path); file != "" {
+				c.File(file)
+				return
+			}
 			c.File("./web/dist/index.html")
 			return
 		}
@@ -43,11 +69,8 @@ func Register(r *gin.Engine, h *handler.Handler) {
 	r.NoMethod(middleware.NoMethodHandler)
 
 	// ========== 前端 SPA（Vue3 + Vite 构建产物） ==========
-	// /assets 下为构建后的静态资源；其余非 /api 的 GET 请求统一回退到 index.html
-	// （vue-router history 模式，刷新/直达深层路由不 404）。
-	spa := r.Group("", middleware.NoCache())
-	spa.Static("/assets", "./web/dist/assets")
-	// 首页加载 SPA 入口（路由守卫决定跳登录页或文档列表）
+	// 静态资源（/assets、/logo.svg 等）由 NoRoute 的文件命中逻辑直接返回；
+	// 首页加载 SPA 入口（路由守卫决定跳登录页或文档列表）。
 	r.GET("/", middleware.NoCache(), func(c *gin.Context) {
 		c.File("./web/dist/index.html")
 	})
