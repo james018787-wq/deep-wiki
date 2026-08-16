@@ -236,7 +236,9 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | POST | `/api/v1/auth/logout` | 登出（使当前令牌失效） |
 | POST | `/api/v1/repo/register` | 注册/更新代码仓库（幂等），body 可携带 `auth_token`（私有仓库 HTTPS 访问令牌，加密存储，仅在提交新令牌时覆盖） |
 | GET | `/api/v1/repo/list` | 仓库列表（令牌脱敏，`has_token` 标识是否已配置） |
+| PUT | `/api/v1/repo/:repo_id` | 编辑仓库基本信息（仓库名/克隆地址/默认分支/说明；改名会改变克隆目录并重新克隆） |
 | PUT | `/api/v1/repo/:repo_id/status` | 启停仓库（1 启用 / 2 停用） |
+| PUT | `/api/v1/repo/:repo_id/token` | 设置/更新仓库访问令牌 |
 | DELETE | `/api/v1/repo/:repo_id/token` | 清除仓库访问令牌 |
 | GET | `/api/v1/report/basic` | 基础统计：总文档数 / 人工校正数 / 自动生成数 / 待复核数 / 模块总数 |
 | POST | `/api/v1/security/scan` | 触发仓库全量代码安全扫描（硬编码密钥/密码/令牌），body: `{repo_id}` → 扫描汇总（扫描文件数 + 高危/中危/低危发现数） |

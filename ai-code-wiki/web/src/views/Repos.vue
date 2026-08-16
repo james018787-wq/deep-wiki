@@ -42,6 +42,7 @@
             <td><span class="status" :class="r.status === 1 ? 'ok' : 'err'">{{ r.status === 1 ? '启用' : '停用' }}</span></td>
             <td>{{ formatTime(r.create_time) }}</td>
             <td>
+              <button class="btn-ghost" :disabled="busyId === r.id" @click="openEditDialog(r)">编辑</button>
               <button v-if="r.status === 1" class="btn-danger" :disabled="busyId === r.id" @click="setStatus(r, 2)">停用</button>
               <button v-else class="btn-ok" :disabled="busyId === r.id" @click="setStatus(r, 1)">启用</button>
             </td>
@@ -52,6 +53,33 @@
         </tbody>
       </table>
       <div class="msg err" v-if="error">{{ error }}</div>
+    </div>
+
+    <div class="modal-mask" v-if="editDialog.show" @click.self="closeEditDialog">
+      <div class="modal">
+        <h4>编辑仓库</h4>
+        <div class="form-item">
+          <label>仓库名（唯一，修改后克隆目录会变化并重新克隆）</label>
+          <input v-model="editDialog.repo_name" placeholder="仓库名">
+        </div>
+        <div class="form-item">
+          <label>克隆地址</label>
+          <input v-model="editDialog.repo_url" placeholder="https/ssh/本地路径">
+        </div>
+        <div class="form-item">
+          <label>默认分支（diff 基线）</label>
+          <input v-model="editDialog.default_branch" placeholder="默认 main">
+        </div>
+        <div class="form-item">
+          <label>仓库说明</label>
+          <input v-model="editDialog.description" placeholder="说明">
+        </div>
+        <div class="modal-actions">
+          <button class="btn-ghost" @click="closeEditDialog">取消</button>
+          <button class="btn-save" :disabled="savingEdit" @click="saveEdit">{{ savingEdit ? '保存中...' : '保存' }}</button>
+        </div>
+        <div class="msg err" v-if="editDialog.err">{{ editDialog.err }}</div>
+      </div>
     </div>
 
     <div class="modal-mask" v-if="tokenDialog.show" @click.self="closeTokenDialog">
@@ -83,6 +111,8 @@ const loading = ref(false)
 const error = ref('')
 const savingToken = ref(false)
 const tokenDialog = reactive({ show: false, repo_id: 0, repo_name: '', token: '', err: '' })
+const savingEdit = ref(false)
+const editDialog = reactive({ show: false, repo_id: 0, repo_name: '', repo_url: '', default_branch: '', description: '', err: '' })
 
 async function register() {
   if (!form.repo_name.trim() || !form.repo_url.trim()) { error.value = '仓库名与克隆地址不能为空'; return }
@@ -124,6 +154,41 @@ function openTokenDialog(r) {
   tokenDialog.repo_name = r.repo_name
   tokenDialog.token = ''
   tokenDialog.err = ''
+}
+
+function openEditDialog(r) {
+  editDialog.show = true
+  editDialog.repo_id = r.id
+  editDialog.repo_name = r.repo_name
+  editDialog.repo_url = r.repo_url
+  editDialog.default_branch = r.default_branch
+  editDialog.description = r.description || ''
+  editDialog.err = ''
+}
+
+function closeEditDialog() {
+  editDialog.show = false
+  editDialog.err = ''
+}
+
+async function saveEdit() {
+  if (!editDialog.repo_name.trim() || !editDialog.repo_url.trim()) { editDialog.err = '仓库名与克隆地址不能为空'; return }
+  savingEdit.value = true
+  editDialog.err = ''
+  try {
+    await apiRequest('/repo/' + editDialog.repo_id, {
+      method: 'PUT',
+      body: JSON.stringify({
+        repo_name: editDialog.repo_name.trim(),
+        repo_url: editDialog.repo_url.trim(),
+        default_branch: editDialog.default_branch.trim(),
+        description: editDialog.description.trim()
+      })
+    })
+    closeEditDialog()
+    load()
+  } catch (e) { editDialog.err = '保存失败: ' + e.message }
+  finally { savingEdit.value = false }
 }
 
 function closeTokenDialog() {

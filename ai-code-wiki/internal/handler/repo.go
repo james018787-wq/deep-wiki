@@ -94,6 +94,30 @@ func (h *RepoHandler) SetToken(c *gin.Context) {
 	common.Success(c, nil)
 }
 
+// Update 编辑仓库基本信息。
+//
+//	PUT /api/v1/repo/:repo_id
+//
+// body: {"repo_name":"order-service","repo_url":"https://...","default_branch":"main","description":"..."}
+func (h *RepoHandler) Update(c *gin.Context) {
+	repoID := common.Str2Int64(c.Param("repo_id"))
+	if repoID <= 0 {
+		common.Fail(c, 400, common.CodeBadRequest, "repo_id 参数错误")
+		return
+	}
+	var req service.UpdateRepoReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.Fail(c, 400, common.CodeBadRequest, "参数错误: "+err.Error())
+		return
+	}
+	repo, err := h.svc.Repo.Update(c.Request.Context(), repoID, &req)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	common.Success(c, repo)
+}
+
 // ClearToken 清除仓库访问令牌。
 func (h *RepoHandler) ClearToken(c *gin.Context) {
 	repoID := common.Str2Int64(c.Param("repo_id"))

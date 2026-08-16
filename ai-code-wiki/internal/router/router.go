@@ -70,6 +70,8 @@ func Register(r *gin.Engine, h *handler.Handler) {
 		api.GET("/repo/list", h.Repo.List)
 		// 启用/停用仓库
 		api.PUT("/repo/:repo_id/status", h.Repo.SetStatus)
+		// 编辑仓库基本信息
+		api.PUT("/repo/:repo_id", h.Repo.Update)
 		api.PUT("/repo/:repo_id/token", h.Repo.SetToken)
 		api.DELETE("/repo/:repo_id/token", h.Repo.ClearToken)
 

@@ -56,6 +56,58 @@ func (s *RepoService) Register(ctx context.Context, req *RegisterRepoReq) (*mode
 	return info, nil
 }
 
+// UpdateRepoReq 编辑仓库入参。
+type UpdateRepoReq struct {
+	RepoName      string `json:"repo_name" binding:"required"` // 仓库名（全局唯一）
+	RepoURL       string `json:"repo_url" binding:"required"`  // 克隆地址
+	DefaultBranch string `json:"default_branch"`               // 默认分支（diff 基线）
+	Description   string `json:"description"`                  // 仓库说明
+}
+
+// Update 编辑仓库基本信息。
+// 注意：修改 repo_name 会改变克隆目录（{GIT_CLONE_DIR}/{repo_name}），下次解析将重新克隆。
+func (s *RepoService) Update(ctx context.Context, repoID int64, req *UpdateRepoReq) (*model.CodeRepo, error) {
+	_ = ctx
+	name := strings.TrimSpace(req.RepoName)
+	url := strings.TrimSpace(req.RepoURL)
+	if name == "" || url == "" {
+		return nil, common.NewError(common.CodeBadRequest, "仓库名与克隆地址不能为空")
+	}
+	existing, err := s.repoRepo.GetByID(repoID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, common.NewError(common.CodeNotFound, "仓库不存在")
+		}
+		return nil, common.WrapError(common.CodeInternalError, "查询仓库失败", err)
+	}
+	// 仓库名唯一性校验（改名时不能与其它仓库冲突）
+	if name != existing.RepoName {
+		if other, err := s.repoRepo.GetByRepoName(name); err == nil {
+			if other != nil && other.ID != repoID {
+				return nil, common.NewError(common.CodeBadRequest, "仓库名已存在")
+			}
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, common.WrapError(common.CodeInternalError, "校验仓库名失败", err)
+		}
+	}
+	branch := strings.TrimSpace(req.DefaultBranch)
+	if branch == "" {
+		branch = existing.DefaultBranch
+		if branch == "" {
+			branch = "main"
+		}
+	}
+	if err := s.repoRepo.UpdateFields(repoID, map[string]any{
+		"repo_name":      name,
+		"repo_url":       url,
+		"default_branch": branch,
+		"description":    strings.TrimSpace(req.Description),
+	}); err != nil {
+		return nil, common.WrapError(common.CodeInternalError, "更新仓库失败", err)
+	}
+	return s.repoRepo.GetByID(repoID)
+}
+
 // List 获取全部未删除仓库（含停用，按 id 升序），供仓库管理页展示与启停操作。
 // 文档/任务页等业务选择器只取启用仓库，由前端按 status 过滤。
 func (s *RepoService) List(ctx context.Context) ([]*model.CodeRepo, error) {
