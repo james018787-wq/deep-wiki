@@ -37,13 +37,17 @@
 
 ## 📸 界面预览
 
-| 文档列表 | 智能问答 | 迭代影响 |
+| 登录页（宇宙空间背景） | 文档列表 | 智能问答 |
 |---|---|---|
-| ![文档列表](docs/screenshots/docs.png) | ![智能问答](docs/screenshots/chat.png) | ![迭代影响](docs/screenshots/impact.png) |
+| ![登录页](docs/screenshots/login.png) | ![文档列表](docs/screenshots/docs.png) | ![智能问答](docs/screenshots/chat.png) |
 
-| 代码安全扫描 | 任务管理 | 仓库管理 |
+| 迭代影响 | 代码安全扫描 | 任务管理 |
 |---|---|---|
-| ![安全扫描](docs/screenshots/security.png) | ![任务管理](docs/screenshots/tasks.png) | ![仓库管理](docs/screenshots/repos.png) |
+| ![迭代影响](docs/screenshots/impact.png) | ![安全扫描](docs/screenshots/security.png) | ![任务管理](docs/screenshots/tasks.png) |
+
+| 仓库管理 |
+|---|
+| ![仓库管理](docs/screenshots/repos.png) |
 
 ## 🏗️ 架构概览
 
