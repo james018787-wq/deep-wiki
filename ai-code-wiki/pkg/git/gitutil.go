@@ -20,7 +20,9 @@ const (
 
 // CloneOrPull 克隆或拉取代码仓库（带超时，防止网络异常卡死）。
 // 本地目录不存在则执行 git clone；已存在则执行 git pull。
-func CloneOrPull(repoURL, branch, localDir string) error {
+// token 非空时注入 http.extraheader（AUTHORIZATION: Bearer <token>），支持 HTTPS 私有仓库鉴权；
+// 令牌通过 GIT_CONFIG_COUNT 环境变量注入，避免出现在进程参数中泄露。
+func CloneOrPull(repoURL, branch, localDir, token string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), clonePullTimeout)
 	defer cancel()
 
@@ -32,27 +34,42 @@ func CloneOrPull(repoURL, branch, localDir string) error {
 			return fmt.Errorf("创建仓库父目录失败: %w", err)
 		}
 		args := []string{"clone", "--branch", branch, repoURL, localDir}
-		out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput()
+		cmd := exec.CommandContext(ctx, "git", args...)
+		withAuthEnv(cmd, token)
+		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("git clone 失败: %v, 输出: %s", err, strings.TrimSpace(string(out)))
 		}
 		return nil
 	}
 
-// 目录已存在：拉取最新代码。
-// 先 fetch 全部分支（保证默认分支 ref 可用作 diff 基线），再硬对齐到目标分支，
-// 避免 pull 产生合并提交导致 diff 基线漂移。
-cmd := exec.CommandContext(ctx, "git", "fetch", "--all", "--prune")
-cmd.Dir = localDir
-if out, err := cmd.CombinedOutput(); err != nil {
-	return fmt.Errorf("git fetch 失败: %v, 输出: %s", err, strings.TrimSpace(string(out)))
+	// 目录已存在：拉取最新代码。
+	// 先 fetch 全部分支（保证默认分支 ref 可用作 diff 基线），再硬对齐到目标分支，
+	// 避免 pull 产生合并提交导致 diff 基线漂移。
+	cmd := exec.CommandContext(ctx, "git", "fetch", "--all", "--prune")
+	cmd.Dir = localDir
+	withAuthEnv(cmd, token)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git fetch 失败: %v, 输出: %s", err, strings.TrimSpace(string(out)))
+	}
+	reset := exec.CommandContext(ctx, "git", "reset", "--hard", "origin/"+branch)
+	reset.Dir = localDir
+	if out, err := reset.CombinedOutput(); err != nil {
+		return fmt.Errorf("git reset 失败: %v, 输出: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
-reset := exec.CommandContext(ctx, "git", "reset", "--hard", "origin/"+branch)
-reset.Dir = localDir
-if out, err := reset.CombinedOutput(); err != nil {
-	return fmt.Errorf("git reset 失败: %v, 输出: %s", err, strings.TrimSpace(string(out)))
-}
-return nil
+
+// withAuthEnv 通过 GIT_CONFIG_COUNT 注入 http.extraheader 凭据（不落盘、不进进程参数）。
+func withAuthEnv(cmd *exec.Cmd, token string) {
+	if token == "" {
+		return
+	}
+	cmd.Env = append(os.Environ(),
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=http.extraheader",
+		"GIT_CONFIG_VALUE_0=AUTHORIZATION: Bearer "+token,
+	)
 }
 
 // GetDiffFiles 获取两个 commit 之间变更的文件列表（带超时）。

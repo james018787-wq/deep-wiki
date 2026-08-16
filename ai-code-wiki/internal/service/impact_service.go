@@ -313,7 +313,7 @@ func (s *ImpactService) deriveFuncsFromBranch(repoID int64, branch string) ([]*F
 	if strings.TrimSpace(repoInfo.RepoURL) == "" {
 		return nil, common.NewError(common.CodeInternalError, "仓库克隆地址未配置")
 	}
-	if err := git.CloneOrPull(repoInfo.RepoURL, branch, cloneDir); err != nil {
+	if err := git.CloneOrPull(repoInfo.RepoURL, branch, cloneDir, repoInfo.AuthToken); err != nil {
 		return nil, common.WrapError(common.CodeInternalError, "拉取代码失败", err)
 	}
 

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"ai-code-wiki/internal/model"
+	"ai-code-wiki/pkg/secrets"
 
 	"gorm.io/gorm"
 )
@@ -16,6 +17,24 @@ type CodeRepoRepo struct {
 // NewCodeRepoRepo 构建仓库注册表仓库。
 func NewCodeRepoRepo(db *gorm.DB) *CodeRepoRepo {
 	return &CodeRepoRepo{BaseRepo: &BaseRepo[model.CodeRepo]{DB: db}}
+}
+
+// GetByID 按主键查询并解密访问令牌（供 git 鉴权使用）。
+func (r *CodeRepoRepo) GetByID(id int64) (*model.CodeRepo, error) {
+	m, err := r.BaseRepo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if m != nil {
+		m.AuthToken = secrets.Decrypt(m.AuthToken)
+		m.HasToken = m.AuthToken != ""
+	}
+	return m, nil
+}
+
+// SetAuthToken 加密并保存仓库访问令牌（空串表示清除）。
+func (r *CodeRepoRepo) SetAuthToken(repoID int64, token string) error {
+	return r.UpdateFields(repoID, map[string]any{"auth_token": secrets.Encrypt(token)})
 }
 
 // EnsureRepo 按仓库名注册：不存在则创建（幂等），已存在则返回现有记录。

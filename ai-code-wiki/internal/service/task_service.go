@@ -31,37 +31,37 @@ import (
 
 // TaskService 代码解析任务业务逻辑。
 type TaskService struct {
-	db         *gorm.DB
-	taskRepo   *repo.TaskRecordRepo
-	docRepo    *repo.CodeFunctionDocRepo
-	moduleRepo *repo.BusinessModuleRepo
-	repoRepo   *repo.CodeRepoRepo        // 代码仓库注册表
-	callEdgeRepo *repo.CallEdgeRepo      // 函数级调用边（迭代影响分析地基）
+	db           *gorm.DB
+	taskRepo     *repo.TaskRecordRepo
+	docRepo      *repo.CodeFunctionDocRepo
+	moduleRepo   *repo.BusinessModuleRepo
+	repoRepo     *repo.CodeRepoRepo       // 代码仓库注册表
+	callEdgeRepo *repo.CallEdgeRepo       // 函数级调用边（迭代影响分析地基）
 	relationRepo *repo.ModuleRelationRepo // 模块依赖图谱（跨包调用聚合 source=1）
-	gitCfg     *config.GitConfig         // git 克隆目录根配置（每个仓库独立子目录）
-	llmBaseURL string                    // Python LLM 服务地址（LLM_SERVICE_URL）
-	llmTimeout time.Duration             // LLM 生成文档调用超时（LLM_TIMEOUT，默认 60s）
-	vc         vector.VectorClient       // 向量存储抽象（业务不感知 chroma/milvus）
-	queue      taskqueue.TaskQueue       // 异步任务队列（提交入口，消费由独立 Worker 完成）
-	fileFilter *filefilter.FileFilter    // 文件过滤规则（跳过测试/依赖/非业务代码）
+	gitCfg       *config.GitConfig        // git 克隆目录根配置（每个仓库独立子目录）
+	llmBaseURL   string                   // Python LLM 服务地址（LLM_SERVICE_URL）
+	llmTimeout   time.Duration            // LLM 生成文档调用超时（LLM_TIMEOUT，默认 60s）
+	vc           vector.VectorClient      // 向量存储抽象（业务不感知 chroma/milvus）
+	queue        taskqueue.TaskQueue      // 异步任务队列（提交入口，消费由独立 Worker 完成）
+	fileFilter   *filefilter.FileFilter   // 文件过滤规则（跳过测试/依赖/非业务代码）
 }
 
 // NewTaskService 构建任务服务。
 // vc 为 nil 时跳过向量同步（向量引擎未配置/初始化失败场景）。
 func NewTaskService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient, queue taskqueue.TaskQueue) *TaskService {
 	return &TaskService{
-		db:         db,
-		taskRepo:   newTaskRepo(db),
-		docRepo:    newDocRepo(db),
-		moduleRepo: repo.NewBusinessModuleRepo(db),
-		repoRepo:   repo.NewCodeRepoRepo(db),
+		db:           db,
+		taskRepo:     newTaskRepo(db),
+		docRepo:      newDocRepo(db),
+		moduleRepo:   repo.NewBusinessModuleRepo(db),
+		repoRepo:     repo.NewCodeRepoRepo(db),
 		callEdgeRepo: repo.NewCallEdgeRepo(db),
 		relationRepo: repo.NewModuleRelationRepo(db),
-		gitCfg:     &cfg.Git,
-		llmBaseURL: cfg.LLM.BaseURL,
-		llmTimeout: llmCallTimeout(cfg.LLM.Timeout, defaultLLMTimeoutSec),
-		vc:         vc,
-		queue:      queue,
+		gitCfg:       &cfg.Git,
+		llmBaseURL:   cfg.LLM.BaseURL,
+		llmTimeout:   llmCallTimeout(cfg.LLM.Timeout, defaultLLMTimeoutSec),
+		vc:           vc,
+		queue:        queue,
 		fileFilter: filefilter.New(filefilter.Config{
 			IgnoreDirs:   filefilter.SplitList(cfg.Filter.IgnoreDirs),
 			IgnoreFileRe: filefilter.SplitList(cfg.Filter.IgnoreFileRe),
@@ -252,7 +252,7 @@ func (s *TaskService) process(ctx context.Context, task *model.TaskRecord) error
 	if strings.TrimSpace(repoInfo.RepoURL) == "" {
 		return fmt.Errorf("仓库 %s 克隆地址未配置", repoInfo.RepoName)
 	}
-	if err := git.CloneOrPull(repoInfo.RepoURL, task.Branch, cloneDir); err != nil {
+	if err := git.CloneOrPull(repoInfo.RepoURL, task.Branch, cloneDir, repoInfo.AuthToken); err != nil {
 		return fmt.Errorf("拉取代码失败: %w", err)
 	}
 

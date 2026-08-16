@@ -28,6 +28,7 @@ type RegisterRepoReq struct {
 	RepoURL       string `json:"repo_url" binding:"required"`  // 克隆地址（https/ssh 均可）
 	DefaultBranch string `json:"default_branch"`               // 默认分支（默认 main，用于增量 diff 基线）
 	Description   string `json:"description"`                  // 仓库说明
+	AuthToken     string `json:"auth_token"`                   // 私有仓库访问令牌（HTTPS Bearer，加密存储）
 }
 
 // Register 注册代码仓库（幂等）：按仓库名不存在则创建，已存在则返回现有记录。
@@ -46,6 +47,12 @@ func (s *RepoService) Register(ctx context.Context, req *RegisterRepoReq) (*mode
 	if err != nil {
 		return nil, common.WrapError(common.CodeInternalError, "注册仓库失败", err)
 	}
+	// 仅当提交了新令牌才更新（避免幂等重注册覆盖已有令牌）。
+	if strings.TrimSpace(req.AuthToken) != "" {
+		if err := s.repoRepo.SetAuthToken(info.ID, strings.TrimSpace(req.AuthToken)); err != nil {
+			return nil, common.WrapError(common.CodeInternalError, "保存仓库令牌失败", err)
+		}
+	}
 	return info, nil
 }
 
@@ -57,7 +64,25 @@ func (s *RepoService) List(ctx context.Context) ([]*model.CodeRepo, error) {
 	if err != nil {
 		return nil, common.WrapError(common.CodeInternalError, "查询仓库列表失败", err)
 	}
+	for _, m := range list {
+		m.HasToken = m.AuthToken != "" // 密文非空即视为已配置，且不外泄明文
+	}
 	return list, nil
+}
+
+// ClearToken 清除仓库访问令牌（撤销鉴权）。
+func (s *RepoService) ClearToken(ctx context.Context, repoID int64) error {
+	_ = ctx
+	if _, err := s.repoRepo.GetByID(repoID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return common.NewError(common.CodeNotFound, "仓库不存在")
+		}
+		return common.WrapError(common.CodeInternalError, "查询仓库失败", err)
+	}
+	if err := s.repoRepo.SetAuthToken(repoID, ""); err != nil {
+		return common.WrapError(common.CodeInternalError, "清除仓库令牌失败", err)
+	}
+	return nil
 }
 
 // SetStatusReq 启停仓库入参。

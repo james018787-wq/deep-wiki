@@ -70,6 +70,7 @@ func Register(r *gin.Engine, h *handler.Handler) {
 		api.GET("/repo/list", h.Repo.List)
 		// 启用/停用仓库
 		api.PUT("/repo/:repo_id/status", h.Repo.SetStatus)
+		api.DELETE("/repo/:repo_id/token", h.Repo.ClearToken)
 
 		// ========== 代码解析任务 ==========
 		// 触发代码解析任务（CI 回调）

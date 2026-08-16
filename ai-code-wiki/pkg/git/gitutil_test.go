@@ -95,12 +95,12 @@ func TestCloneOrPull(t *testing.T) {
 			dst := filepath.Join(base, "repo")
 			if tc.createDst {
 				// 先克隆一次，使目标目录已存在
-				if err := CloneOrPull(src, "main", dst); err != nil {
+				if err := CloneOrPull(src, "main", dst, ""); err != nil {
 					t.Fatalf("首次克隆失败: %v", err)
 				}
 			}
 			tc.prepare(t, src, dst)
-			if err := CloneOrPull(src, "main", dst); err != nil {
+			if err := CloneOrPull(src, "main", dst, ""); err != nil {
 				t.Fatalf("CloneOrPull 失败: %v", err)
 			}
 			tc.check(t, dst)

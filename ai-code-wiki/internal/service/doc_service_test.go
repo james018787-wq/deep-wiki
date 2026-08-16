@@ -18,6 +18,7 @@ import (
 	"os"
 	"testing"
 
+	"ai-code-wiki/internal/config"
 	"ai-code-wiki/internal/model"
 	"ai-code-wiki/pkg/common"
 	"ai-code-wiki/pkg/taskqueue"
@@ -127,7 +128,7 @@ func TestRestoreFromOriginDoc(t *testing.T) {
 // TestDocEdit 表格驱动：人工校正事务正常落库 + 操作日志生成。
 func TestDocEdit(t *testing.T) {
 	db := newTestDB(t)
-	svc := NewDocService(db, nil, taskqueue.NewMemoryQueue()) // nil 向量客户端：跳过向量同步（外部依赖）
+	svc := NewDocService(db, nil, taskqueue.NewMemoryQueue(), &config.GitConfig{CloneDir: t.TempDir()}) // nil 向量客户端：跳过向量同步（外部依赖）
 
 	cases := []struct {
 		name        string // 用例名
@@ -135,6 +136,7 @@ func TestDocEdit(t *testing.T) {
 		req         *EditDocReq
 		wantSummary string
 		wantProcess string
+		wantOp      string // 预期操作人（operator 由 handler 传入，service 层不再读取请求体）
 	}{
 		{
 			name:        "编辑全部业务字段",
@@ -145,21 +147,21 @@ func TestDocEdit(t *testing.T) {
 				OutputDesc:  "新出参",
 				ProcessFlow: "新流程",
 				RiskPoint:   "新风险",
-				Operator:    "alice",
 				Remark:      "人工校正",
 			},
 			wantSummary: "新摘要",
 			wantProcess: "新流程",
+			wantOp:      "alice",
 		},
 		{
 			name:        "仅编辑流程不覆盖摘要",
 			seedSummary: "保留摘要",
 			req: &EditDocReq{
 				ProcessFlow: "补充流程",
-				Operator:    "bob",
 			},
 			wantSummary: "保留摘要",
 			wantProcess: "补充流程",
+			wantOp:      "bob",
 		},
 	}
 
@@ -176,7 +178,7 @@ func TestDocEdit(t *testing.T) {
 			}
 			docID := seedDoc(t, db, seed)
 
-			if err := svc.EditDoc(context.Background(), docID, tc.req); err != nil {
+			if err := svc.EditDoc(context.Background(), docID, tc.req, tc.wantOp); err != nil {
 				t.Fatalf("EditDoc 失败: %v", err)
 			}
 
@@ -194,8 +196,8 @@ func TestDocEdit(t *testing.T) {
 			if got.ContentSource != common.ContentSourceManual {
 				t.Errorf("content_source 应为人工校正(2), got %d", got.ContentSource)
 			}
-			if got.LastEditUser != tc.req.Operator {
-				t.Errorf("last_edit_user 不匹配: got %q want %q", got.LastEditUser, tc.req.Operator)
+			if got.LastEditUser != tc.wantOp {
+				t.Errorf("last_edit_user 不匹配: got %q want %q", got.LastEditUser, tc.wantOp)
 			}
 			if got.LastEditTime == nil {
 				t.Error("last_edit_time 应被记录")
@@ -216,7 +218,7 @@ func TestDocEdit(t *testing.T) {
 			if l.OperateType != common.DocOperateEdit {
 				t.Errorf("operate_type 应为编辑(1), got %d", l.OperateType)
 			}
-			if l.Operator != tc.req.Operator {
+			if l.Operator != tc.wantOp {
 				t.Errorf("日志操作人不匹配: got %q", l.Operator)
 			}
 			if l.BeforeContent == "" || l.AfterContent == "" {
@@ -246,16 +248,7 @@ func TestDocEdit(t *testing.T) {
 // TestDocEditError 表格驱动：编辑的异常分支。
 func TestDocEditError(t *testing.T) {
 	db := newTestDB(t)
-	svc := NewDocService(db, nil, taskqueue.NewMemoryQueue())
-
-	seed := &model.CodeFunctionDoc{
-		ModuleName:    "test",
-		FilePath:      "test/edit_err.go",
-		FuncName:      "ErrFn",
-		Summary:       "s",
-		ContentSource: common.ContentSourceAuto,
-	}
-	docID := seedDoc(t, db, seed)
+	svc := NewDocService(db, nil, taskqueue.NewMemoryQueue(), &config.GitConfig{CloneDir: t.TempDir()})
 
 	cases := []struct {
 		name     string // 用例名
@@ -263,22 +256,44 @@ func TestDocEditError(t *testing.T) {
 		req      *EditDocReq
 		wantCode int
 	}{
-		{name: "操作人为空", docID: docID, req: &EditDocReq{Summary: "s"}, wantCode: common.CodeBadRequest},
-		{name: "文档不存在", docID: 999999, req: &EditDocReq{Summary: "s", Operator: "alice"}, wantCode: common.CodeNotFound},
+		{name: "文档不存在", docID: 999999, req: &EditDocReq{Summary: "s"}, wantCode: common.CodeNotFound},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := svc.EditDoc(context.Background(), tc.docID, tc.req)
+			err := svc.EditDoc(context.Background(), tc.docID, tc.req, "alice")
 			assertAppErr(t, err, tc.wantCode)
 		})
 	}
+
+	// 操作人为空时由 handler 层兜底（authOperator），service 层降级为 system。
+	t.Run("操作人为空默认system", func(t *testing.T) {
+		seed := &model.CodeFunctionDoc{
+			ModuleName:    "test",
+			FilePath:      "test/empty_operator.go",
+			FuncName:      "EmptyOp",
+			Summary:       "旧摘要",
+			OriginAutoDoc: `{"summary":"原始摘要"}`,
+			ContentSource: common.ContentSourceAuto,
+		}
+		emptyDocID := seedDoc(t, db, seed)
+		if err := svc.EditDoc(context.Background(), emptyDocID, &EditDocReq{Summary: "新摘要"}, ""); err != nil {
+			t.Fatalf("空操作人编辑应成功: %v", err)
+		}
+		var got model.CodeFunctionDoc
+		if err := db.First(&got, emptyDocID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if got.LastEditUser != "system" {
+			t.Fatalf("空操作人应默认 system, got %q", got.LastEditUser)
+		}
+	})
 }
 
 // TestDocReset 表格驱动：文档重置恢复原始 AI 内容，origin_auto_doc 不被覆盖。
 func TestDocReset(t *testing.T) {
 	db := newTestDB(t)
-	svc := NewDocService(db, nil, taskqueue.NewMemoryQueue())
+	svc := NewDocService(db, nil, taskqueue.NewMemoryQueue(), &config.GitConfig{CloneDir: t.TempDir()})
 
 	originJSON := `{"summary":"原始摘要","input_desc":"原入参","output_desc":"原出参","process_flow":"原流程","rely_modules":"[\"m\"]","risk_point":"原风险"}`
 
@@ -363,7 +378,7 @@ func TestDocReset(t *testing.T) {
 // TestDocResetError 表格驱动：重置的异常分支。
 func TestDocResetError(t *testing.T) {
 	db := newTestDB(t)
-	svc := NewDocService(db, nil, taskqueue.NewMemoryQueue())
+	svc := NewDocService(db, nil, taskqueue.NewMemoryQueue(), &config.GitConfig{CloneDir: t.TempDir()})
 
 	cases := []struct {
 		name     string // 用例名
@@ -371,15 +386,6 @@ func TestDocResetError(t *testing.T) {
 		operator string
 		wantCode int
 	}{
-		{
-			name: "操作人为空",
-			seed: &model.CodeFunctionDoc{
-				ModuleName: "test", FilePath: "test/r1.go", FuncName: "R1",
-				OriginAutoDoc: `{"summary":"s"}`,
-			},
-			operator: "",
-			wantCode: common.CodeBadRequest,
-		},
 		{
 			name: "origin为空无法重置",
 			seed: &model.CodeFunctionDoc{
@@ -414,7 +420,7 @@ func TestDocResetError(t *testing.T) {
 // TestDocHistory 验证：编辑/重置会写 doc_modify_log，历史列表与快照详情可查询。
 func TestDocHistory(t *testing.T) {
 	db := newTestDB(t)
-	svc := NewDocService(db, nil, taskqueue.NewMemoryQueue())
+	svc := NewDocService(db, nil, taskqueue.NewMemoryQueue(), &config.GitConfig{CloneDir: t.TempDir()})
 
 	doc := &model.CodeFunctionDoc{
 		ModuleName:    "test",
@@ -427,8 +433,8 @@ func TestDocHistory(t *testing.T) {
 
 	// 1. 编辑一次（写入 operate_type=1）
 	if err := svc.EditDoc(context.Background(), docID, &EditDocReq{
-		Summary: "编辑后摘要", Operator: "alice", Remark: "第一次编辑",
-	}); err != nil {
+		Summary: "编辑后摘要", Remark: "第一次编辑",
+	}, "alice"); err != nil {
 		t.Fatalf("EditDoc 失败: %v", err)
 	}
 	// 2. 重置一次（写入 operate_type=2）

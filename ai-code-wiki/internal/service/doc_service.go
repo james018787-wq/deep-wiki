@@ -27,7 +27,7 @@ type DocService struct {
 	modifyLog  *repo.DocModifyLogRepo
 	changeLog  *repo.CodeChangeLogRepo
 	moduleRepo *repo.BusinessModuleRepo
-	repoRepo   *repo.CodeRepoRepo // 代码仓库注册表（解析仓库名用于向量元数据）
+	repoRepo   *repo.CodeRepoRepo  // 代码仓库注册表（解析仓库名用于向量元数据）
 	vc         vector.VectorClient // 向量存储抽象（业务不感知 chroma/milvus）
 	queue      taskqueue.TaskQueue // 异步任务队列（提交入口，消费由独立 Worker 完成）
 	gitCfg     *config.GitConfig   // git 克隆目录根配置（每个仓库独立子目录）
@@ -118,7 +118,7 @@ func (s *DocService) GetSource(ctx context.Context, docID int64) (*DocSourceResu
 	content, err := git.ReadFile(cloneDir, doc.FilePath)
 	if err != nil {
 		// 克隆缺失或工作区在旧分支：拉取默认分支后重试一次
-		if pullErr := git.CloneOrPull(repoInfo.RepoURL, repoInfo.DefaultBranch, cloneDir); pullErr != nil {
+		if pullErr := git.CloneOrPull(repoInfo.RepoURL, repoInfo.DefaultBranch, cloneDir, repoInfo.AuthToken); pullErr != nil {
 			return nil, common.NewError(common.CodeInternalError, "读取源码失败且无法拉取仓库: "+err.Error()+"; "+pullErr.Error())
 		}
 		content, err = git.ReadFile(cloneDir, doc.FilePath)

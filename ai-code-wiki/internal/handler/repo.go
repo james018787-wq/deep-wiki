@@ -68,3 +68,17 @@ func (h *RepoHandler) SetStatus(c *gin.Context) {
 	}
 	common.Success(c, nil)
 }
+
+// ClearToken 清除仓库访问令牌。
+func (h *RepoHandler) ClearToken(c *gin.Context) {
+	repoID := common.Str2Int64(c.Param("repo_id"))
+	if repoID <= 0 {
+		common.Fail(c, 400, common.CodeBadRequest, "repo_id 参数错误")
+		return
+	}
+	if err := h.svc.Repo.ClearToken(c.Request.Context(), repoID); err != nil {
+		handleError(c, err)
+		return
+	}
+	common.Success(c, nil)
+}

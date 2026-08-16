@@ -164,6 +164,7 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 | `GIT_DEFAULT_BRANCH` | git.default_branch | main | 默认分支（增量解析 diff 的基准分支） |
 | `GIT_CLONE_DIR` | git.clone_dir | ./repo_cache | 代码仓库本地克隆目录 |
 | `API_SECRET_KEY` | —（鉴权中间件直接读取） | 空 | API 密钥，为空时 `/api/v1` 鉴权关闭；非空时请求需带请求头 `X-Api-Secret` |
+| `REPO_TOKEN_KEY` | —（`pkg/secrets` 读取） | 空 | 仓库访问令牌的 AES-256-GCM 加密密钥（hex 编码 32 字节）。为空时令牌明文存储（仅限开发），生产必须配置 |
 | `WEBHOOK_SECRET` | —（webhook 处理器直接读取） | 空 | webhook 签名密钥，为空时跳过签名校验（开发环境）；非空时 GitLab/Gitee 回调需携带对应 Token/签名，校验失败返回 403 |
 | `TASK_QUEUE_DRIVER` | task_queue.driver | memory | 异步任务队列驱动：`memory`（开发，内存 channel）/ `rabbitmq`（生产，消息持久化 + 手动 ACK） |
 | `RABBITMQ_URL` | task_queue.rabbitmq_url | 空 | RabbitMQ 连接地址，如 `amqp://user:pass@host:5672/`（`TASK_QUEUE_DRIVER=rabbitmq` 时必填） |
@@ -231,6 +232,10 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | POST | `/api/v1/auth/login` | 登录（**公开接口**），body: `{username, password}` → `{token, expire_at, username, nickname}` |
 | GET | `/api/v1/auth/me` | 当前登录用户（Bearer Token） |
 | POST | `/api/v1/auth/logout` | 登出（使当前令牌失效） |
+| POST | `/api/v1/repo/register` | 注册/更新代码仓库（幂等），body 可携带 `auth_token`（私有仓库 HTTPS 访问令牌，加密存储，仅在提交新令牌时覆盖） |
+| GET | `/api/v1/repo/list` | 仓库列表（令牌脱敏，`has_token` 标识是否已配置） |
+| PUT | `/api/v1/repo/:repo_id/status` | 启停仓库（1 启用 / 2 停用） |
+| DELETE | `/api/v1/repo/:repo_id/token` | 清除仓库访问令牌 |
 | GET | `/api/v1/report/basic` | 基础统计：总文档数 / 人工校正数 / 自动生成数 / 待复核数 / 模块总数 |
 
 ### 4.1 前端（Vue3 + Vite SPA）
@@ -247,7 +252,7 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | `/doc-source/:id` | 源码查看 | 新窗口展示文档对应源码文件（行号），支持从列表/编辑页「查看源码」进入 |
 | `/doc-history/:id` | 文档历史版本 | 历史列表 + 快照详情，查看修改前后原始 JSON |
 | `/tasks` | 任务管理 | 任务列表 / 状态查询 / 触发解析任务 |
-| `/repos` | 仓库管理 | 注册 / 启停代码仓库 |
+| `/repos` | 仓库管理 | 注册（含可选访问令牌）/ 启停 / 清除令牌 |
 
 前端构建（本地开发或重新生成 `dist`，需 Node ≥ 18；国内网络已配置 npmmirror 镜像）：
 
@@ -348,6 +353,9 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
    - 请求级覆盖：`force_model` 强制指定、`force_high_quality` 仅走高配；埋点日志含 `used_model` / `switch_count` / `cost` 便于成本与降级监控。
 8. **日志与监控**
    - 生产建议启用文件日志（`logger.NewFileSink`），统一采集到日志平台；健康检查 `/health` 已适配 docker healthcheck（依赖不可用返回 503）。
+9. **私有仓库 HTTPS 鉴权**
+   - 注册仓库时可携带 `auth_token`（GitLab/Gitee/GitHub Personal Access Token）；clone/fetch/reset 时通过 `GIT_CONFIG_COUNT` 注入 `http.extraheader=AUTHORIZATION: Bearer <token>`，令牌不落盘、不进进程参数；
+   - 令牌经 AES-256-GCM 加密后入库（密钥来自 `REPO_TOKEN_KEY`，hex 32 字节），API 出参脱敏（仅 `has_token`）；生产必须配置 `REPO_TOKEN_KEY`，未配置时明文降级仅限本地开发。
 
 ## 7. 表结构简要说明
 
