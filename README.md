@@ -98,6 +98,53 @@ docker compose up -d
 # 默认管理员：admin / admin123（生产务必通过 AUTH_ADMIN_PASSWORD 修改）
 ```
 
+## 🛠️ 全新部署问题与排障（实战记录）
+
+以下问题均为**从零部署**（全新数据卷 + 独立端口）时实测遇到并解决的，供部署排查参考。
+
+### 1. 全新库表结构不完整 / 与运行库不一致
+- **现象**：全新 MySQL 初始化后缺少部分表/列（如 `code_secret_finding` 表、`func_line` 列），或列可空性与预期不符。
+- **原因**：`init_sql/init.sql`（整合版建表）曾落后于迭代新增的表/列，而增量迁移只对存量库生效。
+- **解决**：以「线上运行库结构」为权威，逐表比对 `SHOW COLUMNS` 补齐 `init.sql`（已补 `code_secret_finding`、`func_line NOT NULL` 等）。
+- **预防**：新增字段/表时，同时改 `init_sql/init.sql` **和** `init_sql/migrations/` 迁移脚本。
+
+### 2. 迁移脚本与整合版 init.sql 冲突（重复加列报错）
+- **现象**：全新部署时 MySQL 初始化脚本执行失败（如 `Duplicate column name 'repo_id'`）。
+- **原因**：`docker-entrypoint-initdb.d` 按文件名顺序执行目录下**所有** `.sql`；`init.sql` 已是整合版全量结构，再跑 `migrate_repo_id.sql` 等增量脚本会重复 ALTER。
+- **解决**：将全部 `migrate_*.sql` 移入 `init_sql/migrations/` 子目录（MySQL 初始化脚本**不递归子目录**），全新部署只执行 `init.sql`；存量库升级仍手动执行子目录脚本。
+
+### 3. 向量库集合不存在 → 向量同步 500
+- **现象**：解析任务生成文档后，向量同步全部失败：`Collection code_doc does not exist`（Chroma 返回 500），检索无结果。
+- **原因**：`pkg/vector` 的 Chroma 实现只 `GET /api/v1/collections/{name}` **解析**集合，不自动创建；旧环境里的集合是历史遗留，全新 Chroma 为空。
+- **解决**：全新部署后手动创建集合（维度与 embedding 模型一致，如 bge-large-zh-v1.5 → 1024）：
+  ```bash
+  curl -X POST http://localhost:8000/api/v1/collections \
+       -H 'Content-Type: application/json' -d '{"name":"code_doc"}'
+  curl http://localhost:8000/api/v1/collections/code_doc   # 确认 dimension 与 embedding 一致
+  ```
+- **注意**：创建集合前已生成的文档，其向量同步任务重试耗尽后**不会自动补写**；可调整代码在缓存命中分支校验向量或提供重同步入口。
+
+### 4. 单分支仓库无法全量解析（diff 为空）
+- **现象**：注册只有一个 `main/master` 分支的仓库并触发解析，任务秒完成但**零文档**（日志 `无业务代码文件变更`）。
+- **原因**：增量解析基于 `git diff origin/{默认分支} .. origin/{任务分支}`，单分支与自身 diff 为空。
+- **解决**：为仓库建一个**空基线分支**作为 `default_branch`（基线），任务分支指向真实代码分支，即可一次性全量解析：
+  ```bash
+  git checkout --orphan empty-base && git commit --allow-empty -m "baseline" && git checkout master
+  # 然后注册仓库 default_branch=empty-base，触发 branch=master
+  ```
+
+### 5. 仓库注册接口幂等，不更新 default_branch 等字段
+- **现象**：重复调用 `/api/v1/repo/register` 修改 `default_branch` 不生效。
+- **原因**：注册为幂等（`FirstOrCreate`），已存在仓库只返回现有记录，仅 `auth_token` 在提交新值时更新。
+- **解决**：存量调整用 `UPDATE code_repo SET default_branch='...' WHERE repo_name='...'`（或后续增加独立更新接口）。
+
+### 6. 端口冲突（与既有环境并存）
+- **现象**：本机已有服务占用 3306/8000/6379/8080/9000。
+- **解决**：用独立 compose 文件 + 项目名 + 端口偏移部署多环境：
+  ```bash
+  docker-compose -p myenv -f compose.yml up -d --build   # compose.yml 内映射如 13306/18000/18080
+  ```
+
 ## 📁 目录结构
 
 ```
