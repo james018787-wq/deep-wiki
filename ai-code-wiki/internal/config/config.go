@@ -42,10 +42,10 @@ type MySQLConfig struct {
 }
 
 // GitConfig 代码仓库配置。
+// 多仓库支持后仓库地址/分支已迁移到 code_repo 表（经 /api/v1/repo/register 注册），
+// 此处仅保留克隆目录根（GIT_CLONE_DIR，默认 /app/repo_cache），每个仓库独立子目录。
 type GitConfig struct {
-	RepoURL       string `yaml:"repo_url"`
-	CloneDir      string `yaml:"clone_dir"`
-	DefaultBranch string `yaml:"default_branch"`
+	CloneDir string `yaml:"clone_dir"`
 }
 
 // FilterConfig 解析流水线文件过滤规则（逗号分隔字符串，空则回退到默认规则）。
@@ -155,10 +155,8 @@ func (c *Config) ApplyEnv() {
 	c.LLM.BaseURL = envStr("LLM_SERVICE_URL", c.LLM.BaseURL)
 	c.LLM.Timeout = envInt("LLM_TIMEOUT", c.LLM.Timeout)
 
-	// Git 仓库（repo_url 为解析仓库地址，部署时经 GIT_REPO_URL 注入）
-	c.Git.RepoURL = envStr("GIT_REPO_URL", c.Git.RepoURL)
+	// 克隆目录根（多仓库：每个仓库独立子目录 {root}/{repo_name}）
 	c.Git.CloneDir = envStr("GIT_CLONE_DIR", c.Git.CloneDir)
-	c.Git.DefaultBranch = envStr("GIT_DEFAULT_BRANCH", c.Git.DefaultBranch)
 }
 
 // envStr 读取字符串环境变量，为空时返回默认值。

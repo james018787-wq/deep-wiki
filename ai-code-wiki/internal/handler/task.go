@@ -57,10 +57,11 @@ func (h *TaskHandler) Status(c *gin.Context) {
 // List 任务列表，分页查询，按时间倒序。
 // 仅做参数校验，业务逻辑调用 TaskQueryService。
 //
-//	GET /api/v1/task/list?page=1&page_size=20
+//	GET /api/v1/task/list?repo_id=xx&page=1&page_size=20
 func (h *TaskHandler) List(c *gin.Context) {
+	repoID := common.Str2Int64(c.Query("repo_id"))
 	page, pageSize := parsePage(c)
-	result, err := h.svc.TaskQuery.List(c.Request.Context(), page, pageSize)
+	result, err := h.svc.TaskQuery.List(c.Request.Context(), repoID, page, pageSize)
 	if err != nil {
 		handleError(c, err)
 		return

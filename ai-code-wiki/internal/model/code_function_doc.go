@@ -6,9 +6,10 @@ import "time"
 // 最小切片单元为单个函数，一条记录对应一个函数。
 type CodeFunctionDoc struct {
 	ID               int64      `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
-	ModuleName       string     `gorm:"column:module_name;size:64;not null" json:"module_name"`                                        // 所属业务模块
-	FilePath         string     `gorm:"column:file_path;size:512;not null;uniqueIndex:idx_file_func" json:"file_path"`                 // 源码文件路径
-	FuncName         string     `gorm:"column:func_name;size:128;not null;uniqueIndex:idx_file_func" json:"func_name"`                 // 函数名称
+	RepoID           int64      `gorm:"column:repo_id;not null;uniqueIndex:idx_file_func" json:"repo_id"`                    // 所属仓库id
+	ModuleName       string     `gorm:"column:module_name;size:64;not null" json:"module_name"`                              // 所属业务模块
+	FilePath         string     `gorm:"column:file_path;size:512;not null;uniqueIndex:idx_file_func" json:"file_path"`       // 源码文件路径
+	FuncName         string     `gorm:"column:func_name;size:128;not null;uniqueIndex:idx_file_func" json:"func_name"`       // 函数名称
 	SourceCode       string     `gorm:"column:source_code;type:text" json:"source_code"`                                               // 函数源码片段
 	Summary          string     `gorm:"column:summary;type:text" json:"summary"`                                                       // 一句话业务摘要
 	InputDesc        string     `gorm:"column:input_desc;type:text" json:"input_desc"`                                                 // 入参说明

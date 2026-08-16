@@ -25,6 +25,7 @@ type pipelineTaskPayload struct {
 // vectorSyncTaskPayload 向量同步任务载荷（最小切片单元=单个函数文档）。
 type vectorSyncTaskPayload struct {
 	DocID      int64  `json:"doc_id"`
+	RepoName   string `json:"repo_name"`
 	ModuleName string `json:"module_name"`
 	FilePath   string `json:"file_path"`
 	FuncName   string `json:"func_name"`
@@ -41,10 +42,12 @@ func buildPipelineMessage(taskID string) (*taskqueue.TaskMessage, error) {
 }
 
 // buildVectorSyncMessage 构建向量同步任务队列消息。
-func buildVectorSyncMessage(doc *model.CodeFunctionDoc) (*taskqueue.TaskMessage, error) {
+// repoName 为所属仓库名（向量元数据检索隔离用），可为空串。
+func buildVectorSyncMessage(doc *model.CodeFunctionDoc, repoName string) (*taskqueue.TaskMessage, error) {
 	content := strings.Join([]string{doc.Summary, doc.ProcessFlow, doc.RiskPoint}, "\n")
 	payload, err := json.Marshal(vectorSyncTaskPayload{
 		DocID:      doc.ID,
+		RepoName:   repoName,
 		ModuleName: doc.ModuleName,
 		FilePath:   doc.FilePath,
 		FuncName:   doc.FuncName,
@@ -141,6 +144,7 @@ func (w *TaskWorker) handleVectorSync(ctx context.Context, msg *taskqueue.TaskMe
 	}
 	dv := &vector.DocVector{
 		DocID:      p.DocID,
+		RepoName:   p.RepoName,
 		ModuleName: p.ModuleName,
 		FilePath:   p.FilePath,
 		FuncName:   p.FuncName,

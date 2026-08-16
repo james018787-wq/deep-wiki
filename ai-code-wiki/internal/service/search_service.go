@@ -51,10 +51,11 @@ func NewSearchService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient) *
 
 // SearchReq 自然语言查询入参。
 type SearchReq struct {
-	Query            string `json:"query" binding:"required"` // 自然语言查询
-	Module           string `json:"module"`                   // 可选的模块过滤（保留兼容）
-	ForceModel       string `json:"force_model"`              // 可选：强制指定模型（不降级/不熔断/不限流）
-	ForceHighQuality bool   `json:"force_high_quality"`       // 可选：仅用高配模型（过滤低价模型）
+	RepoID           int64  `json:"repo_id" binding:"required"` // 所属仓库id（按库隔离检索）
+	Query            string `json:"query" binding:"required"`   // 自然语言查询
+	Module           string `json:"module"`                     // 可选的模块过滤（保留兼容）
+	ForceModel       string `json:"force_model"`                // 可选：强制指定模型（不降级/不熔断/不限流）
+	ForceHighQuality bool   `json:"force_high_quality"`         // 可选：仅用高配模型（过滤低价模型）
 }
 
 // ReferenceDoc 引用文档来源。
@@ -93,7 +94,7 @@ func (s *SearchService) Search(ctx context.Context, req *SearchReq) (*SearchResu
 	}
 
 	// step2-5: 复用检索流水线（向量召回 + MySQL读候选 + 跨模块扩充）
-	recalled, err := s.RetrieveRelatedDocs(ctx, query)
+	recalled, err := s.RetrieveRelatedDocs(ctx, req.RepoID, query)
 	if err != nil {
 		return nil, err
 	}
@@ -127,9 +128,10 @@ func (s *SearchService) Search(ctx context.Context, req *SearchReq) (*SearchResu
 // RetrieveRelatedDocs 复用检索流水线（步骤2-5）：
 // query转向量 -> 经向量抽象接口得候选doc_id -> MySQL读取候选文档 -> 跨模块扩充召回。
 //
+// repoID 指定检索的仓库范围：<=0 时不限仓库，>0 时仅保留该仓库文档（按库隔离）。
 // 供需求分析等场景复用检索逻辑（禁止重复实现一套检索）。
 // 无相关文档时返回空切片（不报错），由调用方决定后续处理。
-func (s *SearchService) RetrieveRelatedDocs(ctx context.Context, query string) ([]*model.CodeFunctionDoc, error) {
+func (s *SearchService) RetrieveRelatedDocs(ctx context.Context, repoID int64, query string) ([]*model.CodeFunctionDoc, error) {
 	// step2: query 转向量 -> 查询 chroma 得到候选 doc_id 列表
 	candidateIDs, err := s.vectorRecall(ctx, query)
 	if err != nil {
@@ -139,8 +141,8 @@ func (s *SearchService) RetrieveRelatedDocs(ctx context.Context, query string) (
 		return nil, nil
 	}
 
-	// step3: 根据 doc_id 从 MySQL 读取候选文档
-	candidates, err := s.loadDocs(ctx, candidateIDs)
+	// step3: 根据 doc_id 从 MySQL 读取候选文档（按仓库过滤）
+	candidates, err := s.loadDocs(ctx, repoID, candidateIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -148,8 +150,8 @@ func (s *SearchService) RetrieveRelatedDocs(ctx context.Context, query string) (
 		return nil, nil
 	}
 
-	// step4+step5: 读取模块依赖（AST UNION 人工），跨模块扩充召回
-	recalled, err := s.expandRecall(ctx, candidates)
+	// step4+step5: 读取模块依赖（AST UNION 人工），跨模块扩充召回（限定仓库）
+	recalled, err := s.expandRecall(ctx, repoID, candidates)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +179,8 @@ func (s *SearchService) vectorRecall(ctx context.Context, query string) ([]int64
 }
 
 // loadDocs 根据候选 doc_id 从 MySQL 读取候选文档。
-func (s *SearchService) loadDocs(ctx context.Context, ids []int64) ([]*model.CodeFunctionDoc, error) {
+// repoID > 0 时仅保留该仓库文档（按库隔离检索）；<=0 不限仓库。
+func (s *SearchService) loadDocs(ctx context.Context, repoID int64, ids []int64) ([]*model.CodeFunctionDoc, error) {
 	_ = ctx
 	var docs []*model.CodeFunctionDoc
 	seen := make(map[int64]struct{}, len(ids))
@@ -196,6 +199,9 @@ func (s *SearchService) loadDocs(ctx context.Context, ids []int64) ([]*model.Cod
 			}
 			return nil, common.WrapError(common.CodeInternalError, "读取文档失败", err)
 		}
+		if repoID > 0 && doc.RepoID != repoID {
+			continue // 非目标仓库文档，跳过（按库隔离）
+		}
 		docs = append(docs, doc)
 	}
 	return docs, nil
@@ -207,7 +213,7 @@ func (s *SearchService) loadDocs(ctx context.Context, ids []int64) ([]*model.Cod
 //   - 模块依赖查询 = AST 自动识别(source=1) UNION 人工添加(source=2)，
 //     查询时不过滤 source 字段，人工新增依赖不会被丢弃。
 //   - 跨模块扩充在 MySQL 层完成（非向量层）。
-func (s *SearchService) expandRecall(ctx context.Context, candidates []*model.CodeFunctionDoc) ([]*model.CodeFunctionDoc, error) {
+func (s *SearchService) expandRecall(ctx context.Context, repoID int64, candidates []*model.CodeFunctionDoc) ([]*model.CodeFunctionDoc, error) {
 	_ = ctx
 
 	// 候选文档所属模块集合
@@ -226,8 +232,8 @@ func (s *SearchService) expandRecall(ctx context.Context, candidates []*model.Co
 		modules = append(modules, m)
 	}
 
-	// 读取 module_relation（合并 AST + 人工，不过滤 source）
-	rels, err := s.relationRepo.ListRelationsByModules(modules)
+	// 读取 module_relation（合并 AST + 人工，不过滤 source，限定仓库）
+	rels, err := s.relationRepo.ListRelationsByModules(repoID, modules)
 	if err != nil {
 		return nil, common.WrapError(common.CodeInternalError, "读取模块依赖失败", err)
 	}
@@ -257,8 +263,8 @@ func (s *SearchService) expandRecall(ctx context.Context, candidates []*model.Co
 		return candidates, nil
 	}
 
-	// MySQL 层查询关联模块下文档，扩充召回
-	relatedDocs, err := s.docRepo.ListByModules(toQuery, len(toQuery)*ExpandLimit)
+	// MySQL 层查询关联模块下文档，扩充召回（限定仓库）
+	relatedDocs, err := s.docRepo.ListByModules(repoID, toQuery, len(toQuery)*ExpandLimit)
 	if err != nil {
 		return nil, common.WrapError(common.CodeInternalError, "跨模块召回失败", err)
 	}

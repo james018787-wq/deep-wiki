@@ -15,6 +15,7 @@ import (
 // RelationService 模块依赖知识图谱业务逻辑。
 type RelationService struct {
 	relationRepo *repo.ModuleRelationRepo
+	repoRepo     *repo.CodeRepoRepo // 代码仓库注册表（校验 repo_id 有效性）
 	db           *gorm.DB
 }
 
@@ -22,14 +23,16 @@ type RelationService struct {
 func NewRelationService(db *gorm.DB) *RelationService {
 	return &RelationService{
 		relationRepo: newRelationRepo(db),
+		repoRepo:     repo.NewCodeRepoRepo(db),
 		db:           db,
 	}
 }
 
 // ListRelationReq 查询模块依赖入参。
 type ListRelationReq struct {
-	Module    string `json:"module"`    // 模块名称
-	Direction string `json:"direction"` // out=下游(out) / in=上游(in)
+	RepoID    int64  `json:"repo_id" binding:"required"` // 所属仓库id
+	Module    string `json:"module"`                     // 模块名称
+	Direction string `json:"direction"`                  // out=下游(out) / in=上游(in)
 }
 
 // ListRelations 查询模块上下游依赖。
@@ -40,6 +43,9 @@ type ListRelationReq struct {
 //     （当前实现直接从 module_relation 表查询，该表已聚合两类来源）。
 func (s *RelationService) ListRelations(ctx context.Context, req *ListRelationReq) ([]*model.ModuleRelation, error) {
 	_ = ctx
+	if req.RepoID <= 0 {
+		return nil, common.NewError(common.CodeBadRequest, "仓库不能为空")
+	}
 	module := strings.TrimSpace(req.Module)
 	if module == "" {
 		return nil, common.NewError(common.CodeBadRequest, "模块名称不能为空")
@@ -51,7 +57,7 @@ func (s *RelationService) ListRelations(ctx context.Context, req *ListRelationRe
 	if direction != "out" && direction != "in" {
 		return nil, common.NewError(common.CodeBadRequest, "direction 仅支持 out/in")
 	}
-	list, err := s.relationRepo.ListByModule(module, direction)
+	list, err := s.relationRepo.ListByModule(req.RepoID, module, direction)
 	if err != nil {
 		return nil, common.WrapError(common.CodeInternalError, "查询模块依赖失败", err)
 	}
@@ -60,6 +66,7 @@ func (s *RelationService) ListRelations(ctx context.Context, req *ListRelationRe
 
 // AddRelationReq 手动新增模块依赖关系入参。
 type AddRelationReq struct {
+	RepoID       int64  `json:"repo_id" binding:"required"` // 所属仓库id
 	SourceModule string `json:"source_module" binding:"required"`
 	TargetModule string `json:"target_module" binding:"required"`
 	RelationType int8   `json:"relation_type" binding:"required"` // 1=同步调用 2=异步MQ
@@ -93,7 +100,7 @@ func (s *RelationService) AddRelation(ctx context.Context, req *AddRelationReq) 
 	}
 
 	// 重复校验：该依赖关系（含 AST/人工来源）已存在时禁止重复新增
-	existing, err := s.relationRepo.GetByRelation(source, target, req.RelationType)
+	existing, err := s.relationRepo.GetByRelation(req.RepoID, source, target, req.RelationType)
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return common.WrapError(common.CodeInternalError, "查询依赖关系失败", err)
 	}
@@ -104,6 +111,7 @@ func (s *RelationService) AddRelation(ctx context.Context, req *AddRelationReq) 
 	// 新增关系 + 操作日志：事务内原子写入，保证"同时写日志"
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		rel := &model.ModuleRelation{
+			RepoID:       req.RepoID,
 			SourceModule: source,
 			TargetModule: target,
 			RelationType: req.RelationType,
@@ -115,6 +123,7 @@ func (s *RelationService) AddRelation(ctx context.Context, req *AddRelationReq) 
 			return common.WrapError(common.CodeInternalError, "新增依赖关系失败", err)
 		}
 		logRecord := &model.RelationModifyLog{
+			RepoID:       req.RepoID,
 			SourceModule: source,
 			TargetModule: target,
 			OperateType:  common.RelationOperateAdd,
@@ -131,6 +140,7 @@ func (s *RelationService) AddRelation(ctx context.Context, req *AddRelationReq) 
 
 // DeleteRelationReq 删除模块依赖入参。
 type DeleteRelationReq struct {
+	RepoID       int64  `json:"repo_id" binding:"required"` // 所属仓库id
 	SourceModule string `json:"source_module" binding:"required"`
 	TargetModule string `json:"target_module" binding:"required"`
 	RelationType int8   `json:"relation_type" binding:"required"` // 1=同步调用 2=异步MQ
@@ -160,7 +170,7 @@ func (s *RelationService) DeleteRelation(ctx context.Context, req *DeleteRelatio
 	}
 
 	// 定位待删除关系
-	rel, err := s.relationRepo.GetByRelation(source, target, req.RelationType)
+	rel, err := s.relationRepo.GetByRelation(req.RepoID, source, target, req.RelationType)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return common.NewError(common.CodeNotFound, "依赖关系不存在")
@@ -176,6 +186,7 @@ func (s *RelationService) DeleteRelation(ctx context.Context, req *DeleteRelatio
 			return common.WrapError(common.CodeInternalError, "删除依赖关系失败", err)
 		}
 		logRecord := &model.RelationModifyLog{
+			RepoID:       req.RepoID,
 			SourceModule: source,
 			TargetModule: target,
 			OperateType:  common.RelationOperateDelete,

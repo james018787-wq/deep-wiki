@@ -48,6 +48,12 @@ const (
 	TaskStatusFailed   int8 = 3 // 3=失败
 )
 
+// ============ 代码仓库状态 status ============
+const (
+	RepoStatusEnabled  int8 = 1 // 1=启用（允许触发解析/检索）
+	RepoStatusDisabled int8 = 2 // 2=停用
+)
+
 // ============ 逻辑删除 is_deleted ============
 const (
 	NotDeleted int8 = 0 // 未删除

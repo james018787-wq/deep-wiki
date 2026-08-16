@@ -31,6 +31,14 @@ func Register(r *gin.Engine, h *handler.Handler) {
 	// 简易 API 密钥鉴权：环境变量 API_SECRET_KEY 为空时自动关闭
 	api.Use(middleware.APIAuth())
 	{
+		// ========== 代码仓库注册（多仓库支持） ==========
+		// 注册代码仓库（幂等）
+		api.POST("/repo/register", h.Repo.Register)
+		// 获取所有启用仓库
+		api.GET("/repo/list", h.Repo.List)
+		// 启用/停用仓库
+		api.PUT("/repo/:repo_id/status", h.Repo.SetStatus)
+
 		// ========== 代码解析任务 ==========
 		// 触发代码解析任务（CI 回调）
 		api.POST("/task/trigger", h.Task.Trigger)
@@ -79,8 +87,10 @@ func Register(r *gin.Engine, h *handler.Handler) {
 	}
 
 	// ========== 极简前端静态页面（原生 HTML + Vue3 CDN，无构建） ==========
-	// 挂载 ./webstatic 目录，不经过 /api/v1 鉴权分组
-	r.Static("/webstatic", "./webstatic")
+	// 挂载 ./webstatic 目录，不经过 /api/v1 鉴权分组；
+	// 加 NoCache 中间件避免浏览器强缓存导致页面/脚本不一致（前端 bind mount 实时开发）。
+	web := r.Group("/webstatic", middleware.NoCache())
+	web.Static("", "./webstatic")
 	// 首页默认跳转文档列表页
 	r.GET("/", func(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/webstatic/docs.html")

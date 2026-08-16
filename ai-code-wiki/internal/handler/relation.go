@@ -20,14 +20,20 @@ func NewRelationHandler(svc *service.Service) *RelationHandler {
 // ListRelations 查询模块上下游依赖。
 // 仅做参数校验与转换，业务逻辑调用 RelationService。
 //
-//	GET /api/v1/relation/list?module=xxx&direction=out|in
+//	GET /api/v1/relation/list?repo_id=xx&module=xxx&direction=out|in
 func (h *RelationHandler) ListRelations(c *gin.Context) {
+	repoID := common.Str2Int64(c.Query("repo_id"))
+	if repoID <= 0 {
+		common.Fail(c, 400, common.CodeBadRequest, "repo_id 参数错误")
+		return
+	}
 	direction := c.DefaultQuery("direction", "out")
 	if direction != "out" && direction != "in" {
 		common.Fail(c, 400, common.CodeBadRequest, "direction 仅支持 out/in")
 		return
 	}
 	req := service.ListRelationReq{
+		RepoID:    repoID,
 		Module:    c.Query("module"),
 		Direction: direction,
 	}

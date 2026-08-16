@@ -51,11 +51,16 @@ func (h *DocHandler) Search(c *gin.Context) {
 	common.Success(c, result)
 }
 
-// ListModules 获取所有业务模块。
+// ListModules 获取指定仓库的所有业务模块。
 //
-//	GET /api/v1/doc/module/list
+//	GET /api/v1/doc/module/list?repo_id=xx
 func (h *DocHandler) ListModules(c *gin.Context) {
-	modules, err := h.svc.Doc.ListModules(c.Request.Context())
+	repoID := common.Str2Int64(c.Query("repo_id"))
+	if repoID <= 0 {
+		common.Fail(c, 400, common.CodeBadRequest, "repo_id 参数错误")
+		return
+	}
+	modules, err := h.svc.Doc.ListModules(c.Request.Context(), repoID)
 	if err != nil {
 		handleError(c, err)
 		return
@@ -65,10 +70,15 @@ func (h *DocHandler) ListModules(c *gin.Context) {
 
 // List 分页查询函数文档列表，支持按模块筛选（前端文档列表页使用）。
 //
-//	GET /api/v1/doc/list?module=xxx&page=1&page_size=20
+//	GET /api/v1/doc/list?repo_id=xx&module=xxx&page=1&page_size=20
 func (h *DocHandler) List(c *gin.Context) {
+	repoID := common.Str2Int64(c.Query("repo_id"))
+	if repoID <= 0 {
+		common.Fail(c, 400, common.CodeBadRequest, "repo_id 参数错误")
+		return
+	}
 	page, pageSize := parsePage(c)
-	result, err := h.svc.Doc.ListDocs(c.Request.Context(), c.Query("module"), page, pageSize)
+	result, err := h.svc.Doc.ListDocs(c.Request.Context(), repoID, c.Query("module"), page, pageSize)
 	if err != nil {
 		handleError(c, err)
 		return
@@ -134,12 +144,17 @@ func (h *DocHandler) ResetDoc(c *gin.Context) {
 	common.Success(c, nil)
 }
 
-// ListModifiedDocs 查询所有人工校正文档。
+// ListModifiedDocs 查询指定仓库所有人工校正文档。
 //
-//	GET /api/v1/doc/modified/list?page=1&page_size=20
+//	GET /api/v1/doc/modified/list?repo_id=xx&page=1&page_size=20
 func (h *DocHandler) ListModifiedDocs(c *gin.Context) {
+	repoID := common.Str2Int64(c.Query("repo_id"))
+	if repoID <= 0 {
+		common.Fail(c, 400, common.CodeBadRequest, "repo_id 参数错误")
+		return
+	}
 	page, pageSize := parsePage(c)
-	result, err := h.svc.Doc.ListModifiedDocs(c.Request.Context(), page, pageSize)
+	result, err := h.svc.Doc.ListModifiedDocs(c.Request.Context(), repoID, page, pageSize)
 	if err != nil {
 		handleError(c, err)
 		return

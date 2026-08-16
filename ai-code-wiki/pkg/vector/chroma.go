@@ -86,17 +86,19 @@ func (c *ChromaClient) write(doc *DocVector) error {
 	}
 
 	apiURL := c.chromaURL + "/api/v1/collections/" + url.PathEscape(colID) + "/upsert"
+	meta := map[string]any{
+		"module_name": doc.ModuleName,
+		"file_path":   doc.FilePath,
+		"func_name":   doc.FuncName,
+	}
+	if doc.RepoName != "" {
+		meta["repo_name"] = doc.RepoName
+	}
 	body, err := json.Marshal(map[string]any{
 		"ids":         []string{strconv.FormatInt(doc.DocID, 10)},
 		"embeddings":  [][]float64{vec},
 		"documents":   []string{doc.Content},
-		"metadatas": []map[string]any{
-			{
-				"module_name": doc.ModuleName,
-				"file_path":   doc.FilePath,
-				"func_name":   doc.FuncName,
-			},
-		},
+		"metadatas":   []map[string]any{meta},
 	})
 	if err != nil {
 		return fmt.Errorf("向量写入请求序列化失败: %w", err)

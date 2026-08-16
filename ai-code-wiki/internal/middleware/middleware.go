@@ -12,6 +12,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// NoCache 静态资源禁用浏览器缓存。
+// 前端通过 bind mount 挂载实时开发，浏览器强缓存会导致页面/脚本不一致（如新增导航、脚本引用），
+// 统一响应 Cache-Control: no-cache 要求每次重新验证。
+func NoCache() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
+		c.Next()
+	}
+}
+
 // Recovery 全局异常恢复中间件。
 // 捕获 handler 层 panic，统一转换为 JSON 返回，避免 500 空白页，
 // 并记录 panic 堆栈到统一日志。

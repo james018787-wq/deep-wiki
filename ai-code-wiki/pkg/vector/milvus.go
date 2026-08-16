@@ -42,6 +42,7 @@ type MilvusClient struct {
 // 集合字段与长度常量（与 code_function_doc 表字段对应）。
 const (
 	milvusFieldDocID      = "doc_id"
+	milvusFieldRepoName   = "repo_name"
 	milvusFieldModuleName = "module_name"
 	milvusFieldFilePath   = "file_path"
 	milvusFieldFuncName   = "func_name"
@@ -49,6 +50,7 @@ const (
 	milvusFieldEmbedding  = "embedding"
 
 	milvusModuleMaxLen   = 64   // module_name VarChar 长度
+	milvusRepoMaxLen     = 64   // repo_name VarChar 长度
 	milvusFilePathMaxLen = 512  // file_path VarChar 长度
 	milvusFuncMaxLen     = 128  // func_name VarChar 长度
 	milvusContentMaxLen  = 6000 // content VarChar 长度（超长截断，全文以 MySQL 为准）
@@ -122,6 +124,11 @@ func (m *MilvusClient) createCollection(ctx context.Context, cli client.Client) 
 			WithDataType(entity.FieldTypeInt64).
 			WithIsPrimaryKey(true).
 			WithDescription("code_function_doc.doc_id")).
+		WithField(entity.NewField().
+			WithName(milvusFieldRepoName).
+			WithDataType(entity.FieldTypeVarChar).
+			WithMaxLength(milvusRepoMaxLen).
+			WithDescription("所属仓库")).
 		WithField(entity.NewField().
 			WithName(milvusFieldModuleName).
 			WithDataType(entity.FieldTypeVarChar).
@@ -199,6 +206,7 @@ func (m *MilvusClient) write(doc *DocVector) error {
 
 	columns := []entity.Column{
 		entity.NewColumnInt64(milvusFieldDocID, []int64{doc.DocID}),
+		entity.NewColumnVarChar(milvusFieldRepoName, []string{doc.RepoName}),
 		entity.NewColumnVarChar(milvusFieldModuleName, []string{doc.ModuleName}),
 		entity.NewColumnVarChar(milvusFieldFilePath, []string{doc.FilePath}),
 		entity.NewColumnVarChar(milvusFieldFuncName, []string{doc.FuncName}),

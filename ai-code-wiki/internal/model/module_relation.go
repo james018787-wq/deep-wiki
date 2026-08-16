@@ -6,6 +6,7 @@ import "time"
 // 关系来源包括 AST 自动识别与人工手动添加，两者取并集展示。
 type ModuleRelation struct {
 	ID           int64     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	RepoID       int64     `gorm:"column:repo_id;not null;uniqueIndex:idx_module_relation" json:"repo_id"` // 所属仓库id
 	SourceModule string    `gorm:"column:source_module;size:64;not null;uniqueIndex:idx_module_relation" json:"source_module"` // 源模块
 	TargetModule string    `gorm:"column:target_module;size:64;not null;uniqueIndex:idx_module_relation" json:"target_module"` // 被依赖模块
 	RelationType int8      `gorm:"column:relation_type;not null;uniqueIndex:idx_module_relation" json:"relation_type"`        // 关系类型：1同步调用 2异步MQ事件

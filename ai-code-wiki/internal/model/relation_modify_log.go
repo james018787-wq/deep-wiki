@@ -5,6 +5,7 @@ import "time"
 // RelationModifyLog 模块依赖关系操作日志，对应 relation_modify_log。
 type RelationModifyLog struct {
 	ID           int64     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	RepoID       int64     `gorm:"column:repo_id;not null;index:idx_repo_id" json:"repo_id"` // 所属仓库id
 	SourceModule string    `gorm:"column:source_module;size:64;not null" json:"source_module"`
 	TargetModule string    `gorm:"column:target_module;size:64;not null" json:"target_module"`
 	OperateType  int8      `gorm:"column:operate_type;not null" json:"operate_type"` // 操作类型：1新增 2编辑 3删除

@@ -35,12 +35,13 @@ type TaskService struct {
 	taskRepo   *repo.TaskRecordRepo
 	docRepo    *repo.CodeFunctionDocRepo
 	moduleRepo *repo.BusinessModuleRepo
-	gitCfg     *config.GitConfig      // git 仓库配置
-	llmBaseURL string                 // Python LLM 服务地址（LLM_SERVICE_URL）
-	llmTimeout time.Duration          // LLM 生成文档调用超时（LLM_TIMEOUT，默认 60s）
-	vc         vector.VectorClient    // 向量存储抽象（业务不感知 chroma/milvus）
-	queue      taskqueue.TaskQueue    // 异步任务队列（提交入口，消费由独立 Worker 完成）
-	fileFilter *filefilter.FileFilter // 文件过滤规则（跳过测试/依赖/非业务代码）
+	repoRepo   *repo.CodeRepoRepo        // 代码仓库注册表
+	gitCfg     *config.GitConfig         // git 克隆目录根配置（每个仓库独立子目录）
+	llmBaseURL string                    // Python LLM 服务地址（LLM_SERVICE_URL）
+	llmTimeout time.Duration             // LLM 生成文档调用超时（LLM_TIMEOUT，默认 60s）
+	vc         vector.VectorClient       // 向量存储抽象（业务不感知 chroma/milvus）
+	queue      taskqueue.TaskQueue       // 异步任务队列（提交入口，消费由独立 Worker 完成）
+	fileFilter *filefilter.FileFilter    // 文件过滤规则（跳过测试/依赖/非业务代码）
 }
 
 // NewTaskService 构建任务服务。
@@ -51,6 +52,7 @@ func NewTaskService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient, que
 		taskRepo:   newTaskRepo(db),
 		docRepo:    newDocRepo(db),
 		moduleRepo: repo.NewBusinessModuleRepo(db),
+		repoRepo:   repo.NewCodeRepoRepo(db),
 		gitCfg:     &cfg.Git,
 		llmBaseURL: cfg.LLM.BaseURL,
 		llmTimeout: llmCallTimeout(cfg.LLM.Timeout, defaultLLMTimeoutSec),
@@ -67,6 +69,7 @@ func NewTaskService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient, que
 // TriggerTaskReq 触发代码解析任务入参（CI 回调）。
 type TriggerTaskReq struct {
 	TaskID string `json:"task_id" binding:"required"` // 任务唯一标识
+	RepoID int64  `json:"repo_id" binding:"required"` // 所属仓库id（code_repo 主键）
 	Branch string `json:"branch" binding:"required"`  // 代码分支
 }
 
@@ -84,6 +87,18 @@ type TriggerTaskReq struct {
 func (s *TaskService) TriggerTask(ctx context.Context, req *TriggerTaskReq) (*model.TaskRecord, error) {
 	_ = ctx
 
+	// 0. 校验仓库存在且启用
+	repoInfo, err := s.repoRepo.GetByID(req.RepoID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, common.NewError(common.CodeBadRequest, "仓库不存在，请先注册仓库")
+		}
+		return nil, common.WrapError(common.CodeInternalError, "查询仓库失败", err)
+	}
+	if repoInfo.Status != common.RepoStatusEnabled {
+		return nil, common.NewError(common.CodeInvalidState, "仓库已停用，无法触发任务")
+	}
+
 	// 1. 校验 task_id 唯一性，避免重复触发
 	var cnt int64
 	if err := s.db.Model(&model.TaskRecord{}).Where("task_id = ?", req.TaskID).Count(&cnt).Error; err != nil {
@@ -97,6 +112,7 @@ func (s *TaskService) TriggerTask(ctx context.Context, req *TriggerTaskReq) (*mo
 	// 并发触发时依赖唯一索引 idx_task_id 兜底：命中唯一键冲突返回 CodeConflict，而非 500。
 	record := &model.TaskRecord{
 		TaskID: req.TaskID,
+		RepoID: req.RepoID,
 		Branch: req.Branch,
 		Status: common.TaskStatusPending,
 	}
@@ -139,12 +155,10 @@ func (s *TaskService) runPipeline(record *model.TaskRecord) error {
 //
 // 业务规则：
 //  1. 校验入参（分支/仓库），tag 推送与分支删除在前置 handler 已过滤，这里再兜底；
-//  2. 以「仓库+branch+after commit」生成幂等 task_id：同一次 push 重复回调
+//  2. 按回调仓库地址匹配已注册代码仓库（code_repo），未注册则报错（需先登记仓库）；
+//  3. 以「仓库+branch+after commit」生成幂等 task_id：同一次 push 重复回调
 //     （平台重试）直接返回已存在任务，不重复触发；
-//  3. 落库 task_record（待执行）后投递异步任务队列，执行增量解析流水线。
-//
-// 说明：仓库地址以服务配置 git.repo_url 为准（单仓库部署约定）；
-// 回调中的仓库地址用于校验与日志，不一致时仅告警不中断。
+//  4. 落库 task_record（待执行）后投递异步任务队列，执行增量解析流水线。
 func (s *TaskService) HandleGitPush(ctx context.Context, event *webhook.PushEvent) (*model.TaskRecord, error) {
 	if event == nil || event.IsTag || event.IsDelete {
 		return nil, common.NewError(common.CodeBadRequest, "仅支持分支 push 事件")
@@ -152,13 +166,20 @@ func (s *TaskService) HandleGitPush(ctx context.Context, event *webhook.PushEven
 	if strings.TrimSpace(event.Branch) == "" {
 		return nil, common.NewError(common.CodeBadRequest, "推送分支为空")
 	}
-	if strings.TrimSpace(s.gitCfg.RepoURL) == "" {
-		return nil, common.NewError(common.CodeInvalidState, "git 仓库未配置，无法执行解析任务")
+	if strings.TrimSpace(event.RepoURL) == "" {
+		return nil, common.NewError(common.CodeBadRequest, "回调仓库地址为空")
 	}
 
-	// 仓库一致性校验：仅告警，仍按配置仓库解析
-	if event.RepoURL != "" && !sameRepo(s.gitCfg.RepoURL, event.RepoURL) {
-		logger.Warn(ctx, "webhook 仓库 %s 与配置仓库 %s 不一致，仍按配置仓库执行解析", event.RepoURL, s.gitCfg.RepoURL)
+	// 按回调仓库地址匹配已注册仓库（多仓库路由）
+	repoInfo, err := s.repoRepo.GetByRepoURL(event.RepoURL)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, common.NewError(common.CodeInvalidState, "仓库未登记，请先通过 /api/v1/repo/register 注册")
+		}
+		return nil, common.WrapError(common.CodeInternalError, "匹配仓库失败", err)
+	}
+	if repoInfo.Status != common.RepoStatusEnabled {
+		return nil, common.NewError(common.CodeInvalidState, "仓库已停用，无法触发解析")
 	}
 
 	taskID := genWebhookTaskID(event)
@@ -173,6 +194,7 @@ func (s *TaskService) HandleGitPush(ctx context.Context, event *webhook.PushEven
 
 	record := &model.TaskRecord{
 		TaskID: taskID,
+		RepoID: repoInfo.ID,
 		Branch: event.Branch,
 		Status: common.TaskStatusPending,
 	}
@@ -190,7 +212,7 @@ func (s *TaskService) HandleGitPush(ctx context.Context, event *webhook.PushEven
 		_ = s.MarkFailed(taskID, "任务投递队列失败: "+err.Error())
 		return nil, common.WrapError(common.CodeInternalError, "任务投递队列失败", err)
 	}
-	logger.Info(ctx, "webhook 触发解析任务成功 task_id=%s branch=%s", taskID, event.Branch)
+	logger.Info(ctx, "webhook 触发解析任务成功 task_id=%s repo=%s branch=%s", taskID, repoInfo.RepoName, event.Branch)
 	return record, nil
 }
 
@@ -209,33 +231,31 @@ func genWebhookTaskID(event *webhook.PushEvent) string {
 	return "webhook-" + hex.EncodeToString(sum[:])[:16]
 }
 
-// sameRepo 判断两个仓库地址是否指向同一仓库（忽略 http/https 协议与末尾 .git）。
-func sameRepo(a, b string) bool {
-	norm := func(s string) string {
-		s = strings.TrimRight(strings.TrimSpace(s), "/")
-		s = strings.TrimSuffix(s, ".git")
-		s = strings.TrimPrefix(s, "https://")
-		s = strings.TrimPrefix(s, "http://")
-		return s
-	}
-	return norm(a) == norm(b)
-}
-
 // process 核心流水线：git拉取 -> diff -> 过滤业务代码文件 -> AST解析 -> LLM生成文档。
 // 文件过滤命中测试文件/依赖目录/非业务后缀等规则时直接跳过，不解析、不生成文档。
 func (s *TaskService) process(ctx context.Context, task *model.TaskRecord) error {
-	// 1. git 拉取/更新代码
-	if strings.TrimSpace(s.gitCfg.RepoURL) == "" {
-		return fmt.Errorf("git仓库地址未配置")
+	// 0. 解析任务所属仓库（克隆目录按仓库名隔离：{cloneRoot}/{repo_name}）
+	repoInfo, err := s.repoRepo.GetByID(task.RepoID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("任务所属仓库不存在 repo_id=%d", task.RepoID)
+		}
+		return fmt.Errorf("查询任务仓库失败: %w", err)
 	}
-	if err := git.CloneOrPull(s.gitCfg.RepoURL, task.Branch, s.gitCfg.CloneDir); err != nil {
+	cloneDir := s.cloneDirFor(repoInfo)
+
+	// 1. git 拉取/更新代码
+	if strings.TrimSpace(repoInfo.RepoURL) == "" {
+		return fmt.Errorf("仓库 %s 克隆地址未配置", repoInfo.RepoName)
+	}
+	if err := git.CloneOrPull(repoInfo.RepoURL, task.Branch, cloneDir); err != nil {
 		return fmt.Errorf("拉取代码失败: %w", err)
 	}
 
 	// 2. 获取 diff 变更文件（任务分支 对比 默认分支）
-	baseRef := "origin/" + s.gitCfg.DefaultBranch
+	baseRef := "origin/" + repoInfo.DefaultBranch
 	branchRef := "origin/" + task.Branch
-	files, err := git.GetDiffFiles(s.gitCfg.CloneDir, baseRef, branchRef)
+	files, err := git.GetDiffFiles(cloneDir, baseRef, branchRef)
 	if err != nil {
 		return fmt.Errorf("获取diff变更文件失败: %w", err)
 	}
@@ -257,7 +277,7 @@ func (s *TaskService) process(ctx context.Context, task *model.TaskRecord) error
 	// 4-5. 解析 + LLM生成文档（单文件失败不终止整体任务）
 	ok := 0
 	for _, file := range codeFiles {
-		if err := s.processFile(file); err != nil {
+		if err := s.processFile(cloneDir, repoInfo, file); err != nil {
 			logger.Warn(ctx, "任务 %s 处理文件失败 %s: %v", task.TaskID, file, err)
 			continue
 		}
@@ -269,6 +289,15 @@ func (s *TaskService) process(ctx context.Context, task *model.TaskRecord) error
 	return nil
 }
 
+// cloneDirFor 计算仓库克隆目录（按仓库名隔离，避免多仓库互相覆盖）。
+func (s *TaskService) cloneDirFor(repoInfo *model.CodeRepo) string {
+	root := strings.TrimRight(s.gitCfg.CloneDir, "/")
+	if root == "" {
+		root = "/app/repo_cache"
+	}
+	return root + "/" + repoInfo.RepoName
+}
+
 // fileFunc 解析出的通用函数单元（函数名 + 源码片段）。
 type fileFunc struct {
 	Name string // 函数名称
@@ -277,9 +306,9 @@ type fileFunc struct {
 
 // processFile 解析单个代码文件，逐个函数生成文档。
 // 按文件后缀选择解析器：.go 走 go ast 解析，.php 走简易正则解析。
-func (s *TaskService) processFile(file string) error {
+func (s *TaskService) processFile(cloneDir string, repoInfo *model.CodeRepo, file string) error {
 	// 读取仓库内文件内容
-	content, err := git.ReadFile(s.gitCfg.CloneDir, file)
+	content, err := git.ReadFile(cloneDir, file)
 	if err != nil {
 		return fmt.Errorf("读取文件失败: %w", err)
 	}
@@ -312,7 +341,7 @@ func (s *TaskService) processFile(file string) error {
 	// 逐个函数生成文档（单函数失败仅记录日志，继续处理）
 	ok := 0
 	for _, fn := range funcs {
-		if err := s.processFunc(file, fn.Name, fn.Code); err != nil {
+		if err := s.processFunc(repoInfo, file, fn.Name, fn.Code); err != nil {
 			logger.Warn(context.Background(), "处理函数失败 %s.%s: %v", file, fn.Name, err)
 			continue
 		}
@@ -332,7 +361,7 @@ func (s *TaskService) processFile(file string) error {
 //  2. origin_auto_doc 只在【首次创建】时写入，任何情况（源码变更、重新解析）禁止覆盖，
 //     保证"重置回 AI 原始版本"始终可追溯到首次生成内容。
 //  3. 无人工校正标记的函数：覆盖写入文档并同步向量库。
-func (s *TaskService) processFunc(file, funcName, code string) error {
+func (s *TaskService) processFunc(repoInfo *model.CodeRepo, file, funcName, code string) error {
 	if strings.TrimSpace(funcName) == "" {
 		return fmt.Errorf("函数名为空，跳过")
 	}
@@ -341,7 +370,7 @@ func (s *TaskService) processFunc(file, funcName, code string) error {
 	moduleName := moduleNameFromPath(file)
 
 	// 登记业务模块（不存在则创建），保证 /doc/module/list 下拉有数据
-	if err := s.ensureModule(moduleName); err != nil {
+	if err := s.ensureModule(repoInfo.ID, moduleName); err != nil {
 		logger.Warn(context.Background(), "登记业务模块失败 module=%s: %v", moduleName, err)
 	}
 
@@ -351,9 +380,9 @@ func (s *TaskService) processFunc(file, funcName, code string) error {
 		return err
 	}
 
-	// 查询函数是否已有文档
+	// 查询函数是否已有文档（按仓库隔离）
 	existing, exists := (*model.CodeFunctionDoc)(nil), false
-	if doc, err := s.docRepo.GetByFileFunc(file, funcName); err == nil {
+	if doc, err := s.docRepo.GetByFileFunc(repoInfo.ID, file, funcName); err == nil {
 		existing, exists = doc, true
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return fmt.Errorf("查询已有文档失败: %w", err)
@@ -374,6 +403,7 @@ func (s *TaskService) processFunc(file, funcName, code string) error {
 
 	// 规则3：无人工校正标记，直接写入文档并同步向量
 	doc := &model.CodeFunctionDoc{
+		RepoID:            repoInfo.ID,
 		ModuleName:        moduleName,
 		FilePath:          file,
 		FuncName:          funcName,
@@ -485,7 +515,7 @@ func (s *TaskService) syncVector(doc *model.CodeFunctionDoc) {
 	if doc == nil || doc.ID <= 0 || s.vc == nil {
 		return
 	}
-	msg, err := buildVectorSyncMessage(doc)
+	msg, err := buildVectorSyncMessage(doc, s.repoName(doc.RepoID))
 	if err != nil {
 		logger.Warn(context.Background(), "构建向量同步任务失败 doc_id=%d err=%v", doc.ID, err)
 		return
@@ -493,6 +523,18 @@ func (s *TaskService) syncVector(doc *model.CodeFunctionDoc) {
 	if err := s.queue.SubmitTask(msg); err != nil {
 		logger.Warn(context.Background(), "向量同步任务投递失败 doc_id=%d err=%v", doc.ID, err)
 	}
+}
+
+// repoName 查询仓库名称（查询失败返回空串，向量元数据缺仓库名不影响功能）。
+func (s *TaskService) repoName(repoID int64) string {
+	if repoID <= 0 {
+		return ""
+	}
+	r, err := s.repoRepo.GetByID(repoID)
+	if err != nil {
+		return ""
+	}
+	return r.RepoName
 }
 
 // moduleNameFromPath 从文件路径推导业务模块名（取首段目录）。
@@ -506,12 +548,12 @@ func moduleNameFromPath(file string) string {
 	return "default"
 }
 
-// ensureModule 登记业务模块：不存在则创建（幂等），模块说明留空。
-func (s *TaskService) ensureModule(moduleName string) error {
+// ensureModule 登记业务模块：不存在则创建（幂等，按仓库隔离），模块说明留空。
+func (s *TaskService) ensureModule(repoID int64, moduleName string) error {
 	if strings.TrimSpace(moduleName) == "" {
 		return nil
 	}
-	_, err := s.moduleRepo.EnsureModule(moduleName, "")
+	_, err := s.moduleRepo.EnsureModule(repoID, moduleName, "")
 	return err
 }
 

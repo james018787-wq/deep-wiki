@@ -25,6 +25,7 @@ type DocService struct {
 	modifyLog  *repo.DocModifyLogRepo
 	changeLog  *repo.CodeChangeLogRepo
 	moduleRepo *repo.BusinessModuleRepo
+	repoRepo   *repo.CodeRepoRepo // 代码仓库注册表（解析仓库名用于向量元数据）
 	vc         vector.VectorClient // 向量存储抽象（业务不感知 chroma/milvus）
 	queue      taskqueue.TaskQueue // 异步任务队列（提交入口，消费由独立 Worker 完成）
 }
@@ -38,15 +39,16 @@ func NewDocService(db *gorm.DB, vc vector.VectorClient, queue taskqueue.TaskQueu
 		modifyLog:  repo.NewDocModifyLogRepo(db),
 		changeLog:  repo.NewCodeChangeLogRepo(db),
 		moduleRepo: repo.NewBusinessModuleRepo(db),
+		repoRepo:   repo.NewCodeRepoRepo(db),
 		vc:         vc,
 		queue:      queue,
 	}
 }
 
-// ListModules 获取所有业务模块。
-func (s *DocService) ListModules(ctx context.Context) ([]*model.BusinessModule, error) {
+// ListModules 获取指定仓库的所有业务模块。
+func (s *DocService) ListModules(ctx context.Context, repoID int64) ([]*model.BusinessModule, error) {
 	_ = ctx
-	modules, err := s.moduleRepo.ListAll()
+	modules, err := s.moduleRepo.ListAll(repoID)
 	if err != nil {
 		return nil, common.WrapError(common.CodeInternalError, "查询业务模块失败", err)
 	}
@@ -54,9 +56,10 @@ func (s *DocService) ListModules(ctx context.Context) ([]*model.BusinessModule, 
 }
 
 // ListDocs 分页查询函数文档列表，可按模块筛选（前端文档列表页使用）。
-func (s *DocService) ListDocs(ctx context.Context, module string, page, pageSize int) (*common.PageResult, error) {
+// repoID 必填，按仓库隔离。
+func (s *DocService) ListDocs(ctx context.Context, repoID int64, module string, page, pageSize int) (*common.PageResult, error) {
 	_ = ctx
-	list, total, err := s.docRepo.ListByModule(strings.TrimSpace(module), page, pageSize)
+	list, total, err := s.docRepo.ListByModule(repoID, strings.TrimSpace(module), page, pageSize)
 	if err != nil {
 		return nil, common.WrapError(common.CodeInternalError, "查询文档列表失败", err)
 	}
@@ -151,6 +154,7 @@ func (s *DocService) EditDoc(ctx context.Context, docID int64, req *EditDocReq) 
 			return common.WrapError(common.CodeInternalError, "文档快照序列化失败", err)
 		}
 		logRecord := &model.DocModifyLog{
+			RepoID:        doc.RepoID,
 			DocID:         docID,
 			OperateType:   common.DocOperateEdit,
 			BeforeContent: string(beforeJSON),
@@ -228,6 +232,7 @@ func (s *DocService) ResetDoc(ctx context.Context, docID int64, operator string)
 			return common.WrapError(common.CodeInternalError, "文档快照序列化失败", err)
 		}
 		logRecord := &model.DocModifyLog{
+			RepoID:        doc.RepoID,
 			DocID:         docID,
 			OperateType:   common.DocOperateReset,
 			BeforeContent: string(beforeJSON),
@@ -298,7 +303,7 @@ func (s *DocService) syncVectorAsync(doc *model.CodeFunctionDoc) {
 	if doc == nil || s.vc == nil {
 		return
 	}
-	msg, err := buildVectorSyncMessage(doc)
+	msg, err := buildVectorSyncMessage(doc, s.repoName(doc.RepoID))
 	if err != nil {
 		logger.Warn(context.Background(), "构建向量同步任务失败 doc_id=%d err=%v", doc.ID, err)
 		return
@@ -308,10 +313,22 @@ func (s *DocService) syncVectorAsync(doc *model.CodeFunctionDoc) {
 	}
 }
 
-// ListModifiedDocs 查询所有人工校正文档。
-func (s *DocService) ListModifiedDocs(ctx context.Context, page, pageSize int) (*common.PageResult, error) {
+// repoName 查询仓库名称（查询失败返回空串，向量元数据缺仓库名不影响功能）。
+func (s *DocService) repoName(repoID int64) string {
+	if repoID <= 0 {
+		return ""
+	}
+	r, err := s.repoRepo.GetByID(repoID)
+	if err != nil {
+		return ""
+	}
+	return r.RepoName
+}
+
+// ListModifiedDocs 查询指定仓库所有人工校正文档。
+func (s *DocService) ListModifiedDocs(ctx context.Context, repoID int64, page, pageSize int) (*common.PageResult, error) {
 	_ = ctx
-	list, total, err := s.docRepo.ListManualModified(page, pageSize)
+	list, total, err := s.docRepo.ListManualModified(repoID, page, pageSize)
 	if err != nil {
 		return nil, err
 	}

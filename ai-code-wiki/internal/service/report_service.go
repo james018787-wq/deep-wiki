@@ -32,28 +32,33 @@ type ReportBasicResult struct {
 	ModuleCount        int64 `json:"module_count"`         // 模块总数量（未删除）
 }
 
-// Basic 基础统计：各类文档数量与模块数量。
+// Basic 基础统计：各类文档数量与模块数量（可按仓库隔离）。
 // 所有统计均基于现有表聚合查询（CountByWhere 自动排除已删除记录），不新增数据表。
-func (s *ReportService) Basic(ctx context.Context) (*ReportBasicResult, error) {
+// repoID > 0 时仅统计该仓库；<=0 时统计全部仓库。
+func (s *ReportService) Basic(ctx context.Context, repoID int64) (*ReportBasicResult, error) {
 	_ = ctx
+	scope := map[string]any{}
+	if repoID > 0 {
+		scope["repo_id"] = repoID
+	}
 
-	total, err := s.docRepo.CountByWhere(map[string]any{})
+	total, err := s.docRepo.CountByWhere(scope)
 	if err != nil {
 		return nil, common.WrapError(common.CodeInternalError, "统计文档总数失败", err)
 	}
-	manual, err := s.docRepo.CountByWhere(map[string]any{"content_source": common.ContentSourceManual})
+	manual, err := s.docRepo.CountByWhere(mergeWhere(scope, map[string]any{"content_source": common.ContentSourceManual}))
 	if err != nil {
 		return nil, common.WrapError(common.CodeInternalError, "统计人工校正文档失败", err)
 	}
-	auto, err := s.docRepo.CountByWhere(map[string]any{"content_source": common.ContentSourceAuto})
+	auto, err := s.docRepo.CountByWhere(mergeWhere(scope, map[string]any{"content_source": common.ContentSourceAuto}))
 	if err != nil {
 		return nil, common.WrapError(common.CodeInternalError, "统计自动生成文档失败", err)
 	}
-	pending, err := s.docRepo.CountByWhere(map[string]any{"source_code_changed": common.SourceCodeChanged})
+	pending, err := s.docRepo.CountByWhere(mergeWhere(scope, map[string]any{"source_code_changed": common.SourceCodeChanged}))
 	if err != nil {
 		return nil, common.WrapError(common.CodeInternalError, "统计待复核文档失败", err)
 	}
-	modules, err := s.moduleRepo.CountByWhere(map[string]any{})
+	modules, err := s.moduleRepo.CountByWhere(scope)
 	if err != nil {
 		return nil, common.WrapError(common.CodeInternalError, "统计模块数量失败", err)
 	}
@@ -65,4 +70,16 @@ func (s *ReportService) Basic(ctx context.Context) (*ReportBasicResult, error) {
 		PendingReviewCount: pending,
 		ModuleCount:        modules,
 	}, nil
+}
+
+// mergeWhere 合并两组 where 条件（不修改原 map）。
+func mergeWhere(a, b map[string]any) map[string]any {
+	out := make(map[string]any, len(a)+len(b))
+	for k, v := range a {
+		out[k] = v
+	}
+	for k, v := range b {
+		out[k] = v
+	}
+	return out
 }

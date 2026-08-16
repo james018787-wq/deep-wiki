@@ -2,19 +2,36 @@
 -- MySQL8.0 首次启动时由 docker-entrypoint-initdb.d 自动导入
 -- 字符集 utf8mb4，与 docker-compose 中 mysql 服务配置保持一致
 
+-- 代码仓库注册表（多仓库支持：仓库按 repo_name 唯一注册，业务表通过 repo_id 隔离）
+CREATE TABLE IF NOT EXISTS `code_repo` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `repo_name` varchar(64) NOT NULL COMMENT '仓库名（全局唯一，克隆目录/{repo_name}）',
+  `repo_url` varchar(512) NOT NULL COMMENT '克隆地址',
+  `default_branch` varchar(128) NOT NULL DEFAULT 'main' COMMENT '默认分支（增量diff基线）',
+  `description` varchar(512) DEFAULT '' COMMENT '仓库说明',
+  `status` tinyint NOT NULL DEFAULT 1 COMMENT '1启用 2停用',
+  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_repo_name` (`repo_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='代码仓库注册表';
+
 CREATE TABLE IF NOT EXISTS `business_module` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `repo_id` bigint NOT NULL DEFAULT 0 COMMENT '所属仓库id',
   `module_name` varchar(64) NOT NULL COMMENT '业务模块名称',
   `desc` varchar(512) DEFAULT '' COMMENT '模块说明',
   `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
   `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `is_deleted` tinyint DEFAULT 0,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `idx_module_name` (`module_name`)
+  UNIQUE KEY `idx_module_name` (`repo_id`,`module_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='业务模块表';
 
 CREATE TABLE IF NOT EXISTS `code_function_doc` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `repo_id` bigint NOT NULL DEFAULT 0 COMMENT '所属仓库id',
   `module_name` varchar(64) NOT NULL COMMENT '所属业务模块',
   `file_path` varchar(512) NOT NULL COMMENT '源码文件路径',
   `func_name` varchar(128) NOT NULL COMMENT '函数名称',
@@ -34,11 +51,12 @@ CREATE TABLE IF NOT EXISTS `code_function_doc` (
   `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `is_deleted` tinyint DEFAULT 0,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `idx_file_func` (`file_path`,`func_name`,`is_deleted`)
+  UNIQUE KEY `idx_file_func` (`repo_id`,`file_path`,`func_name`,`is_deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='函数业务文档主表';
 
 CREATE TABLE IF NOT EXISTS `module_relation` (
   `id` bigint NOT NULL AUTO_INCREMENT,
+  `repo_id` bigint NOT NULL DEFAULT 0 COMMENT '所属仓库id',
   `source_module` varchar(64) NOT NULL COMMENT '源模块',
   `target_module` varchar(64) NOT NULL COMMENT '被依赖模块',
   `relation_type` tinyint NOT NULL COMMENT '1同步调用 2异步MQ事件',
@@ -49,11 +67,12 @@ CREATE TABLE IF NOT EXISTS `module_relation` (
   `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `is_deleted` tinyint DEFAULT 0,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `idx_module_relation` (`source_module`,`target_module`,`relation_type`,`is_deleted`)
+  UNIQUE KEY `idx_module_relation` (`repo_id`,`source_module`,`target_module`,`relation_type`,`is_deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='模块依赖知识图谱表';
 
 CREATE TABLE IF NOT EXISTS `doc_modify_log` (
   `id` bigint NOT NULL AUTO_INCREMENT,
+  `repo_id` bigint NOT NULL DEFAULT 0 COMMENT '所属仓库id',
   `doc_id` bigint NOT NULL COMMENT '关联code_function_doc主键',
   `operate_type` tinyint NOT NULL COMMENT '1编辑文档 2重置回AI原始版本',
   `before_content` text COMMENT '修改前完整文档JSON',
@@ -62,22 +81,26 @@ CREATE TABLE IF NOT EXISTS `doc_modify_log` (
   `operate_time` datetime DEFAULT CURRENT_TIMESTAMP,
   `remark` varchar(512) DEFAULT '',
   PRIMARY KEY (`id`),
-  KEY `idx_doc_id` (`doc_id`)
+  KEY `idx_doc_id` (`doc_id`),
+  KEY `idx_repo_id` (`repo_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档人工校正日志';
 
 CREATE TABLE IF NOT EXISTS `relation_modify_log` (
   `id` bigint NOT NULL AUTO_INCREMENT,
+  `repo_id` bigint NOT NULL DEFAULT 0 COMMENT '所属仓库id',
   `source_module` varchar(64) NOT NULL,
   `target_module` varchar(64) NOT NULL,
   `operate_type` tinyint NOT NULL COMMENT '1新增 2编辑 3删除',
   `operator` varchar(64) NOT NULL,
   `operate_time` datetime DEFAULT CURRENT_TIMESTAMP,
   `remark` varchar(512) DEFAULT '',
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  KEY `idx_repo_id` (`repo_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='模块依赖关系操作日志';
 
 CREATE TABLE IF NOT EXISTS `code_change_log` (
   `id` bigint NOT NULL AUTO_INCREMENT,
+  `repo_id` bigint NOT NULL DEFAULT 0 COMMENT '所属仓库id',
   `doc_id` bigint NOT NULL COMMENT '关联文档id',
   `version` varchar(128) DEFAULT '' COMMENT '发布版本',
   `change_summary` text COMMENT '代码变更摘要',
@@ -85,11 +108,13 @@ CREATE TABLE IF NOT EXISTS `code_change_log` (
   `attention` text COMMENT '上线注意事项',
   `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  KEY `idx_doc_id` (`doc_id`)
+  KEY `idx_doc_id` (`doc_id`),
+  KEY `idx_repo_id` (`repo_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='代码迭代变更历史记录';
 
 CREATE TABLE IF NOT EXISTS `task_record` (
   `id` bigint NOT NULL AUTO_INCREMENT,
+  `repo_id` bigint NOT NULL DEFAULT 0 COMMENT '所属仓库id',
   `task_id` varchar(64) NOT NULL COMMENT '任务唯一标识',
   `branch` varchar(128) NOT NULL COMMENT '代码分支',
   `status` tinyint NOT NULL DEFAULT 0 COMMENT '0待执行 1执行中 2成功 3失败',
@@ -98,5 +123,6 @@ CREATE TABLE IF NOT EXISTS `task_record` (
   `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
   `finish_time` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `idx_task_id` (`task_id`)
+  UNIQUE KEY `idx_task_id` (`task_id`),
+  KEY `idx_repo_id` (`repo_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='代码解析任务记录表';

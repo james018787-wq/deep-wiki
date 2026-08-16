@@ -14,6 +14,7 @@ type Handler struct {
 	Requirement *RequirementHandler
 	Webhook     *WebhookHandler
 	Report      *ReportHandler
+	Repo        *RepoHandler
 }
 
 // NewHandler 构建处理器聚合对象。
@@ -25,5 +26,6 @@ func NewHandler(svc *service.Service) *Handler {
 	h.Requirement = NewRequirementHandler(svc)
 	h.Webhook = NewWebhookHandler(svc)
 	h.Report = NewReportHandler(svc)
+	h.Repo = NewRepoHandler(svc)
 	return h
 }

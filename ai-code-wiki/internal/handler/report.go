@@ -15,10 +15,13 @@ func NewReportHandler(svc *service.Service) *ReportHandler {
 	return &ReportHandler{svc: svc}
 }
 
-// Basic 基础统计 GET /api/v1/report/basic。
-// 无入参，仅调用统计服务输出知识库基础指标。
+// Basic 基础统计。
+//
+//	GET /api/v1/report/basic?repo_id=xx
+// 未传 repo_id 时统计全部仓库。
 func (h *ReportHandler) Basic(c *gin.Context) {
-	data, err := h.svc.Report.Basic(c.Request.Context())
+	repoID := common.Str2Int64(c.Query("repo_id"))
+	data, err := h.svc.Report.Basic(c.Request.Context(), repoID)
 	if err != nil {
 		handleError(c, err)
 		return

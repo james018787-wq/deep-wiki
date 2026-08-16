@@ -26,6 +26,7 @@ func NewTaskQueryService(db *gorm.DB) *TaskQueryService {
 // TaskStatusResult 任务状态查询结果。
 type TaskStatusResult struct {
 	TaskID     string     `json:"task_id"`     // 任务唯一标识
+	RepoID     int64      `json:"repo_id"`     // 所属仓库id
 	Branch     string     `json:"branch"`      // 代码分支
 	Status     int8       `json:"status"`      // 任务状态：0待执行 1执行中 2成功 3失败
 	StatusDesc string     `json:"status_desc"` // 任务状态描述
@@ -48,6 +49,7 @@ func (s *TaskQueryService) GetStatus(ctx context.Context, taskID string) (*TaskS
 	}
 	return &TaskStatusResult{
 		TaskID:     record.TaskID,
+		RepoID:     record.RepoID,
 		Branch:     record.Branch,
 		Status:     record.Status,
 		StatusDesc: taskStatusDesc(record.Status),
@@ -59,9 +61,14 @@ func (s *TaskQueryService) GetStatus(ctx context.Context, taskID string) (*TaskS
 }
 
 // List 任务列表，分页查询，按创建时间倒序。
-func (s *TaskQueryService) List(ctx context.Context, page, pageSize int) (*common.PageResult, error) {
+// repoID > 0 时仅查询该仓库任务；<=0 查询全部。
+func (s *TaskQueryService) List(ctx context.Context, repoID int64, page, pageSize int) (*common.PageResult, error) {
 	_ = ctx
-	list, total, err := s.taskRepo.ListByWhere(map[string]any{}, "create_time desc, id desc", page, pageSize)
+	where := map[string]any{}
+	if repoID > 0 {
+		where["repo_id"] = repoID
+	}
+	list, total, err := s.taskRepo.ListByWhere(where, "create_time desc, id desc", page, pageSize)
 	if err != nil {
 		return nil, common.WrapError(common.CodeInternalError, "查询任务列表失败", err)
 	}

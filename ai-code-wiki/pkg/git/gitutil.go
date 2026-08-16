@@ -25,11 +25,13 @@ func CloneOrPull(repoURL, branch, localDir string) error {
 	defer cancel()
 
 	if _, err := os.Stat(localDir); os.IsNotExist(err) {
-		// 目录不存在：克隆仓库（只拉取指定分支）
+		// 目录不存在：克隆仓库。
+		// 注意：不能使用 --single-branch —— 增量 diff 需要默认分支(origin/{default})
+		// 作为对比基线，单分支克隆会导致 origin/{default} 缺失。
 		if err := os.MkdirAll(filepath.Dir(localDir), 0o755); err != nil {
 			return fmt.Errorf("创建仓库父目录失败: %w", err)
 		}
-		args := []string{"clone", "--branch", branch, "--single-branch", repoURL, localDir}
+		args := []string{"clone", "--branch", branch, repoURL, localDir}
 		out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("git clone 失败: %v, 输出: %s", err, strings.TrimSpace(string(out)))
@@ -37,14 +39,20 @@ func CloneOrPull(repoURL, branch, localDir string) error {
 		return nil
 	}
 
-	// 目录已存在：拉取最新代码
-	cmd := exec.CommandContext(ctx, "git", "pull", "origin", branch)
-	cmd.Dir = localDir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git pull 失败: %v, 输出: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+// 目录已存在：拉取最新代码。
+// 先 fetch 全部分支（保证默认分支 ref 可用作 diff 基线），再硬对齐到目标分支，
+// 避免 pull 产生合并提交导致 diff 基线漂移。
+cmd := exec.CommandContext(ctx, "git", "fetch", "--all", "--prune")
+cmd.Dir = localDir
+if out, err := cmd.CombinedOutput(); err != nil {
+	return fmt.Errorf("git fetch 失败: %v, 输出: %s", err, strings.TrimSpace(string(out)))
+}
+reset := exec.CommandContext(ctx, "git", "reset", "--hard", "origin/"+branch)
+reset.Dir = localDir
+if out, err := reset.CombinedOutput(); err != nil {
+	return fmt.Errorf("git reset 失败: %v, 输出: %s", err, strings.TrimSpace(string(out)))
+}
+return nil
 }
 
 // GetDiffFiles 获取两个 commit 之间变更的文件列表（带超时）。

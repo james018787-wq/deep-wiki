@@ -9,6 +9,7 @@ package vector
 // 最小切片单元为单个函数文档。
 type DocVector struct {
 	DocID      int64    // 关联 code_function_doc 主键
+	RepoName   string   // 所属仓库名（多仓库检索隔离用）
 	ModuleName string   // 所属模块
 	FilePath   string   // 文件路径
 	FuncName   string   // 函数名称

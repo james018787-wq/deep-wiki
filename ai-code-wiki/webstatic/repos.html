@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>仓库管理 - ai-code-wiki</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    body { font-family: "Helvetica Neue", Arial, "PingFang SC", sans-serif; margin: 0; background: #f5f6fa; color: #333; }
+    nav { background: #2c3e50; padding: 10px 24px; display: flex; gap: 24px; align-items: center; }
+    nav a { color: #fff; text-decoration: none; font-weight: 600; }
+    nav a.active { color: #42b983; }
+    nav span { color: #8aa; font-size: 13px; margin-left: auto; }
+    .container { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
+    .panel { background: #fff; padding: 18px 20px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.1); margin-bottom: 20px; }
+    .panel h4 { margin: 0 0 12px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .row input { padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; }
+    .row button { padding: 6px 16px; border: none; border-radius: 4px; background: #42b983; color: #fff; cursor: pointer; }
+    .row button:disabled { opacity: .6; cursor: not-allowed; }
+    .btn-ok { padding: 4px 12px; border: none; border-radius: 4px; background: #42b983; color: #fff; cursor: pointer; }
+    .btn-danger { padding: 4px 12px; border: none; border-radius: 4px; background: #e53935; color: #fff; cursor: pointer; }
+    .btn-ok:disabled, .btn-danger:disabled { opacity: .6; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #eee; padding: 8px 10px; text-align: left; font-size: 13px; }
+    th { background: #f0f2f5; white-space: nowrap; }
+    .msg { margin-top: 12px; padding: 8px 12px; border-radius: 4px; font-size: 13px; }
+    .msg.err { background: #fdecea; color: #c62828; }
+    .msg.ok { background: #e8f5e9; color: #2e7d32; }
+    .msg.info { background: #e3f2fd; color: #1565c0; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="docs.html">文档列表</a>
+    <a href="tasks.html">任务管理</a>
+    <a href="repos.html" class="active">仓库管理</a>
+    <span>ai-code-wiki</span>
+  </nav>
+
+  <div id="app" class="container">
+    <!-- 注册代码仓库 -->
+    <div class="panel">
+      <h4>注册代码仓库</h4>
+      <div class="row">
+        <input v-model="form.repo_name" placeholder="仓库名（全局唯一）" style="flex:1;min-width:150px;">
+        <input v-model="form.repo_url" placeholder="克隆地址（https/ssh/本地路径）" style="flex:2;min-width:260px;">
+        <input v-model="form.default_branch" placeholder="默认分支（默认 main）" style="width:140px;">
+        <button :disabled="submitting" @click="register">注册</button>
+      </div>
+      <div class="msg ok" v-if="regMsg">{{ regMsg }}</div>
+    </div>
+
+    <!-- 仓库列表 -->
+    <div class="panel">
+      <h4>仓库列表</h4>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>仓库名</th>
+            <th>克隆地址</th>
+            <th>默认分支</th>
+            <th>状态</th>
+            <th>注册时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="r in list" :key="r.id">
+            <td>{{ r.id }}</td>
+            <td>{{ r.repo_name }}</td>
+            <td>{{ r.repo_url }}</td>
+            <td>{{ r.default_branch }}</td>
+            <td><span class="status" :class="r.status === 1 ? 'ok' : 'err'">{{ r.status === 1 ? '启用' : '停用' }}</span></td>
+            <td>{{ formatTime(r.create_time) }}</td>
+            <td>
+              <button v-if="r.status === 1" class="btn-danger" :disabled="busyId === r.id" @click="setStatus(r, 2)">停用</button>
+              <button v-else class="btn-ok" :disabled="busyId === r.id" @click="setStatus(r, 1)">启用</button>
+            </td>
+          </tr>
+          <tr v-if="!loading && list.length === 0">
+            <td colspan="7" style="text-align:center;color:#999;">暂无仓库，请先注册</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="msg err" v-if="error">{{ error }}</div>
+    </div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="api.js"></script>
+  <script src="repo.js"></script>
+  <script>
+    Vue.createApp({
+      data() {
+        return {
+          form: { repo_name: '', repo_url: '', default_branch: 'main' },
+          submitting: false,
+          regMsg: '',
+          busyId: 0,
+          list: [],
+          loading: false,
+          error: ''
+        };
+      },
+      methods: {
+        async register() {
+          if (!this.form.repo_name.trim() || !this.form.repo_url.trim()) { this.error = '仓库名与克隆地址不能为空'; return; }
+          this.submitting = true; this.error = ''; this.regMsg = '';
+          try {
+            await apiRequest('/repo/register', { method: 'POST', body: JSON.stringify(this.form) });
+            this.regMsg = '注册成功';
+            this.load();
+          } catch (e) { this.error = '注册失败: ' + e.message; }
+          finally { this.submitting = false; }
+        },
+        async setStatus(r, status) {
+          this.busyId = r.id; this.error = '';
+          try {
+            await apiRequest('/repo/' + r.id + '/status', { method: 'PUT', body: JSON.stringify({ status: status }) });
+            r.status = status;
+          } catch (e) { this.error = '操作失败: ' + e.message; }
+          finally { this.busyId = 0; }
+        },
+        async load() {
+          this.loading = true; this.error = '';
+          try {
+            this.list = await fetchRepos();
+          } catch (e) { this.error = '加载仓库列表失败: ' + e.message; }
+          finally { this.loading = false; }
+        },
+        formatTime(t) {
+          return t ? String(t).replace('T', ' ').slice(0, 19) : '-';
+        }
+      },
+      mounted() {
+        this.load();
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>

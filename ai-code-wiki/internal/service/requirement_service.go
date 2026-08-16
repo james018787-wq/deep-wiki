@@ -32,9 +32,10 @@ func NewRequirementService(search *SearchService, cfg *config.Config) *Requireme
 
 // AnalyzeReq 新产品需求分析入参。
 type AnalyzeReq struct {
+	RepoID           int64  `json:"repo_id" binding:"required"`   // 所属仓库id（按库隔离检索）
 	Requirement      string `json:"user_requirement" binding:"required"` // 用户业务需求文本
-	ForceModel       string `json:"force_model"`                         // 可选：强制指定模型（不降级/不熔断/不限流）
-	ForceHighQuality bool   `json:"force_high_quality"`                  // 可选：仅用高配模型（过滤低价模型）
+	ForceModel       string `json:"force_model"`                   // 可选：强制指定模型（不降级/不熔断/不限流）
+	ForceHighQuality bool   `json:"force_high_quality"`            // 可选：仅用高配模型（过滤低价模型）
 }
 
 // RelatedFunction 需求涉及的函数文档。
@@ -84,8 +85,8 @@ func (s *RequirementService) Analyze(ctx context.Context, req *AnalyzeReq) (*Ana
 		return nil, common.NewError(common.CodeBadRequest, "需求描述不能为空")
 	}
 
-	// step2: 复用检索流水线，检索相关函数文档
-	docs, err := s.search.RetrieveRelatedDocs(ctx, requirement)
+	// step2: 复用检索流水线，检索相关函数文档（限定仓库）
+	docs, err := s.search.RetrieveRelatedDocs(ctx, req.RepoID, requirement)
 	if err != nil {
 		return nil, err
 	}

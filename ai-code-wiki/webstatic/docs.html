@@ -35,11 +35,16 @@
   <nav>
     <a href="docs.html" class="active">文档列表</a>
     <a href="tasks.html">任务管理</a>
+    <a href="repos.html">仓库管理</a>
     <span>ai-code-wiki</span>
   </nav>
 
   <div id="app" class="container">
     <div class="toolbar">
+      <label>仓库：</label>
+      <select v-model="repoId" @change="onRepoChange">
+        <option v-for="r in enabledRepos" :key="r.id" :value="r.id">{{ r.repo_name }}</option>
+      </select>
       <label>模块筛选：</label>
       <select v-model="module" @change="load(1)">
         <option value="">全部模块</option>
@@ -88,10 +93,13 @@
 
   <script src="config.js"></script>
   <script src="api.js"></script>
+  <script src="repo.js"></script>
   <script>
     Vue.createApp({
       data() {
         return {
+          repos: [],
+          repoId: 0,
           modules: [],
           module: '',
           list: [],
@@ -103,10 +111,27 @@
           error: ''
         };
       },
+      computed: {
+        enabledRepos() {
+          return enabledRepos(this.repos);
+        }
+      },
       methods: {
+        async initRepos() {
+          try {
+            this.repos = await fetchRepos();
+            this.repoId = defaultRepoId(this.enabledRepos);
+          } catch (e) { this.error = '加载仓库失败: ' + e.message; }
+        },
+        onRepoChange() {
+          setRepoId(this.repoId);
+          this.module = '';
+          this.loadModules();
+          this.load(1);
+        },
         async loadModules() {
           try {
-            this.modules = await apiRequest('/doc/module/list');
+            this.modules = await apiRequest('/doc/module/list?repo_id=' + this.repoId);
           } catch (e) { this.error = '加载模块失败: ' + e.message; }
         },
         async load(page) {
@@ -114,7 +139,7 @@
           this.loading = true;
           this.error = '';
           try {
-            const params = new URLSearchParams({ page: this.page, page_size: this.pageSize });
+            const params = new URLSearchParams({ repo_id: this.repoId, page: this.page, page_size: this.pageSize });
             if (this.module) params.set('module', this.module);
             const data = await apiRequest('/doc/list?' + params.toString());
             this.list = data.list || [];
@@ -130,7 +155,8 @@
           return t ? String(t).replace('T', ' ').slice(0, 19) : '-';
         }
       },
-      mounted() {
+      async mounted() {
+        await this.initRepos();
         this.loadModules();
         this.load(1);
       }
