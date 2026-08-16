@@ -42,15 +42,23 @@
         <button class="btn-back" @click="goSource">查看源码</button>
         <button class="btn-back" @click="goHistory">历史版本</button>
         <button class="btn-back" @click="goList">返回列表</button>
+        <button class="btn-back" v-if="doc.origin_auto_doc" @click="openOriginModal">查看原始文档</button>
       </div>
 
       <div class="msg err" v-if="error">{{ error }}</div>
       <div class="msg ok" v-if="okMsg">{{ okMsg }}</div>
+    </div>
 
-      <details v-if="doc.origin_auto_doc">
-        <summary>查看原始 AI 自动生成文档（origin_auto_doc，只读）</summary>
-        <pre>{{ doc.origin_auto_doc }}</pre>
-      </details>
+    <div class="modal-mask" v-if="originModal.show" @click.self="closeOriginModal">
+      <div class="modal modal-wide">
+        <h4>原始 AI 自动生成文档 <span class="hint">origin_auto_doc（只读，重置依据）</span></h4>
+        <div class="origin-json">
+          <json-viewer :value="originModal.data" :expand-depth="3" copyable boxed sort></json-viewer>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-ghost" @click="closeOriginModal">关闭</button>
+        </div>
+      </div>
     </div>
 
     <div class="panel" v-if="graph">
@@ -65,12 +73,15 @@ import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiRequest } from '../api'
 import CallGraph from '../components/CallGraph.vue'
+import { JsonViewer } from 'vue3-json-viewer'
+import 'vue3-json-viewer/dist/vue3-json-viewer.css'
 
 const route = useRoute()
 const router = useRouter()
 const docId = ref(0)
 const doc = ref({})
 const graph = ref(null)
+const originModal = reactive({ show: false, data: null })
 const form = reactive({ summary: '', input_desc: '', output_desc: '', process_flow: '', risk_point: '', remark: '' })
 const saving = ref(false)
 const error = ref('')
@@ -87,6 +98,19 @@ function goSource() {
 }
 function goList() {
   router.push('/docs')
+}
+
+function openOriginModal() {
+  let data = null
+  try {
+    data = JSON.parse(doc.value.origin_auto_doc || 'null')
+  } catch (e) { data = doc.value.origin_auto_doc }
+  originModal.show = true
+  originModal.data = data
+}
+
+function closeOriginModal() {
+  originModal.show = false
 }
 
 async function load() {

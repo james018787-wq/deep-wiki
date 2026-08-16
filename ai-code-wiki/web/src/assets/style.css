@@ -354,6 +354,24 @@ a.link:hover { text-shadow: 0 0 12px rgba(34,211,238,.8); }
   border-radius: 12px; padding: 20px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
+.modal.modal-wide { width: 720px; max-width: 94vw; }
+.origin-json {
+  max-height: 62vh; overflow: auto;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: rgba(5, 9, 20, 0.6); padding: 8px;
+}
+.origin-json .jv-container { background: transparent !important; }
+.origin-json .jv-container .jv-code,
+.origin-json .jv-container .jv-item,
+.origin-json .jv-container .jv-ellipsis,
+.origin-json .jv-container .jv-more,
+.origin-json .jv-container .jv-toggle {
+  color: #cbd5e1 !important;
+}
+.origin-json .jv-key { color: var(--cyan) !important; }
+.origin-json .jv-container .jv-string { color: #fbbf24 !important; }
+.origin-json .jv-container .jv-number { color: #f472b6 !important; }
+.origin-json .jv-container .jv-bool, .origin-json .jv-container .jv-null { color: #a78bfa !important; }
 .modal h4 { margin: 0 0 8px; color: var(--text-bright); }
 .modal-desc { color: var(--text-dim); font-size: 13px; margin: 0 0 12px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
