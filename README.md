@@ -26,10 +26,10 @@
 | 🎯 | **混合检索** | 向量语义召回 ∪ 关键词精确召回，答案带 `文件:行号` 引用，一键跳转源码定位 |
 | 🔍 | **迭代影响分析** | 函数级调用边双向 BFS 传播（上游/下游），叠加 **API 签名变更检测 / 数据库表结构变更 / 回归测试圈定**，LLM 合成设计文档初稿并沉淀变更日志 |
 | 🕸️ | **函数调用图** | 文档详情与影响分析内置 D3 力导向调用图，节点跳转源码 |
-| 🛡️ | **代码安全扫描** | 正则引擎检测硬编码密钥/密码/令牌/私钥（11 类规则），脱敏落库，支持全量/增量扫描与误报/修复管理 |
+| 🛡️ | **代码安全扫描** | 正则引擎检测硬编码密钥/密码/令牌/私钥（12 类规则），脱敏落库，支持全量/增量扫描与误报/修复管理 |
 | 📈 | **成本控制** | 源码未变更函数缓存命中跳过 LLM 生成（日志输出命中率），单任务调用预算上限 |
 | 🧹 | **幽灵文档清理** | 函数/文件从代码删除后，对应文档自动下线（逻辑删除 + 审计日志 + 向量清理） |
-| 🗃️ | **多仓库管理** | 仓库注册/启停/令牌管理，私有仓库 HTTPS Bearer 鉴权（AES-GCM 加密存储、出参脱敏） |
+| 🗃️ | **多仓库管理** | 仓库注册（自动校验可用性）/ 编辑 / 启停 / 令牌设置与清除，私有仓库 HTTPS Bearer 鉴权（AES-GCM 加密存储、出参脱敏） |
 | ✍️ | **人工校正** | 文档人工编辑/重置（保留 AI 原始版本）、版本历史、操作日志、迭代变更记录 |
 
 ## 📸 界面预览
@@ -115,14 +115,13 @@ docker compose up -d
 
 ### 3. 向量库集合不存在 → 向量同步 500
 - **现象**：解析任务生成文档后，向量同步全部失败：`Collection code_doc does not exist`（Chroma 返回 500），检索无结果。
-- **原因**：`pkg/vector` 的 Chroma 实现只 `GET /api/v1/collections/{name}` **解析**集合，不自动创建；旧环境里的集合是历史遗留，全新 Chroma 为空。
-- **解决**：全新部署后手动创建集合（维度与 embedding 模型一致，如 bge-large-zh-v1.5 → 1024）：
+- **原因**：`pkg/vector` 的 Chroma 实现只 `GET /api/v1/collections/{name}` **解析**集合，早期版本不自动创建。
+- **解决（已修复）**：Chroma 客户端已支持**自动创建集合**（get_or_create 语义），全新部署无需手动建集；若仍手动创建，维度与 embedding 模型一致即可（如 bge-large-zh-v1.5 → 1024）：
   ```bash
   curl -X POST http://localhost:8000/api/v1/collections \
        -H 'Content-Type: application/json' -d '{"name":"code_doc"}'
-  curl http://localhost:8000/api/v1/collections/code_doc   # 确认 dimension 与 embedding 一致
   ```
-- **注意**：创建集合前已生成的文档，其向量同步任务重试耗尽后**不会自动补写**；可调整代码在缓存命中分支校验向量或提供重同步入口。
+- **注意**：集合创建前已生成的文档，其向量同步任务重试耗尽后**不会自动补写**；可调整代码在缓存命中分支校验向量或提供重同步入口。
 
 ### 4. 单分支仓库无法全量解析（diff 为空）
 - **现象**：注册只有一个 `main/master` 分支的仓库并触发解析，任务秒完成但**零文档**（日志 `无业务代码文件变更`）。
@@ -136,7 +135,7 @@ docker compose up -d
 ### 5. 仓库注册接口幂等，不更新 default_branch 等字段
 - **现象**：重复调用 `/api/v1/repo/register` 修改 `default_branch` 不生效。
 - **原因**：注册为幂等（`FirstOrCreate`），已存在仓库只返回现有记录，仅 `auth_token` 在提交新值时更新。
-- **解决**：存量调整用 `UPDATE code_repo SET default_branch='...' WHERE repo_name='...'`（或后续增加独立更新接口）。
+- **解决**：使用编辑接口 `PUT /api/v1/repo/:repo_id` 修改 仓库名/地址/默认分支/说明（前端仓库管理页「编辑」按钮）；或存量调整用 `UPDATE code_repo SET default_branch='...' WHERE repo_name='...'`。
 
 ### 6. 端口冲突（与既有环境并存）
 - **现象**：本机已有服务占用 3306/8000/6379/8080/9000。
@@ -151,10 +150,9 @@ docker compose up -d
 ├── ai-code-wiki/            # 主项目
 │   ├── internal/            # Go 后端（handler / service / repo / model / middleware / router）
 │   ├── pkg/                 # 公共包（astgo / astphp / vector / secretscan / git / taskqueue ...）
-│   ├── web/                 # Vue3 + Vite 前端（views / components / store / router）
-│   ├── config/              # 配置文件
-│   └── init_sql/            # 数据库初始化与增量迁移
+│   └── web/                 # Vue3 + Vite 前端（views / components / store / router）
 ├── ai-wiki-llm/             # Python LLM 微服务（多模型调度 / embedding）
+├── init_sql/                # 数据库初始化（init.sql 全量 + migrations/ 增量迁移）
 ├── docs/screenshots/        # 界面截图
 └── docker-compose.yml       # 一键编排
 ```
@@ -168,11 +166,11 @@ docker compose up -d
 
 | 模块 | 接口 |
 |---|---|
-| 仓库 | `POST /api/v1/repo/register` · `GET /api/v1/repo/list` · `PUT /api/v1/repo/:id/status` · `DELETE /api/v1/repo/:id/token` |
+| 仓库 | `POST /api/v1/repo/register` · `GET /api/v1/repo/list` · `PUT /api/v1/repo/:id` · `PUT /api/v1/repo/:id/status` · `PUT /api/v1/repo/:id/token` · `DELETE /api/v1/repo/:id/token` |
 | 任务 | `POST /api/v1/task/trigger` · `GET /api/v1/task/status` · `GET /api/v1/task/list` |
 | 文档 | `POST /api/v1/doc/search` · `GET /api/v1/doc/list` · `GET /api/v1/doc/:id` · `GET /api/v1/doc/:id/source` · `GET /api/v1/doc/:id/graph` · `PUT /api/v1/doc/:id/edit` |
 | 影响分析 | `POST /api/v1/impact/analyze` |
-| 问答 | `POST /api/v1/chat/ask` · `GET /api/v1/chat/sessions` · `GET /api/v1/chat/history` |
+| 问答 | `POST /api/v1/chat/ask` · `GET /api/v1/chat/sessions` · `GET /api/v1/chat/history` · `DELETE /api/v1/chat/session` |
 | 需求分析 | `POST /api/v1/requirement/analyze` |
 | 安全扫描 | `POST /api/v1/security/scan` · `GET /api/v1/security/list` · `PUT /api/v1/security/:id/status` |
 | 统计 | `GET /api/v1/report/basic` |
