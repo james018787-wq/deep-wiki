@@ -1,33 +1,11 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>迭代影响分析 - ai-code-wiki</title>
-  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-  <link rel="stylesheet" href="style.css">
-</head>
-<body>
-  <nav>
-    <span class="brand">AI·CODE WIKI</span>
-    <a href="docs.html">文档列表</a>
-    <a href="chat.html">智能问答</a>
-    <a href="tasks.html">任务管理</a>
-    <a href="impact.html" class="active">迭代影响</a>
-    <a href="repos.html">仓库管理</a>
-    <span class="spacer"></span>
-    <span class="who" data-auth-user></span>
-    <a class="logout" href="javascript:void(0)" onclick="logout()">登出</a>
-  </nav>
-
-  <div id="app" class="container">
-    <!-- 输入区 -->
+<template>
+  <div class="container">
     <div class="panel">
       <h4>迭代影响分析</h4>
       <div class="row" style="margin-bottom:10px;">
         <label>仓库：</label>
         <select v-model="form.repo_id">
-          <option v-for="r in enabledRepos" :key="r.id" :value="r.id">{{ r.repo_name }}</option>
+          <option v-for="r in enabledRepos2" :key="r.id" :value="r.id">{{ r.repo_name }}</option>
         </select>
         <label>方式：</label>
         <select v-model="form.mode">
@@ -49,7 +27,7 @@
       </div>
       <div class="row" style="margin-bottom:10px;">
         <input v-if="form.mode === 'branch'" v-model="form.branch" placeholder="分支名，如 feature/impact-demo（对比默认分支）" style="flex:1;min-width:200px;">
-        <textarea v-else v-model="form.query" rows="2" placeholder="用自然语言描述本次迭代要改什么，例如：我要改支付回调的签名校验逻辑（支持多轮追问，会累计上下文）"></textarea>
+        <textarea v-else v-model="form.query" placeholder="用自然语言描述本次迭代要改什么，例如：我要改支付回调的签名校验逻辑（支持多轮追问，会累计上下文）" style="height:500px;flex:1;min-width:0;resize:vertical;"></textarea>
       </div>
       <div class="row">
         <input v-model="form.version" placeholder="迭代版本号（可选，写入变更日志）" style="flex:1;min-width:160px;">
@@ -60,7 +38,6 @@
       <div class="msg err" v-if="error">{{ error }}</div>
     </div>
 
-    <!-- 影响视图 -->
     <div class="panel" v-if="result">
       <h4>影响分析结果</h4>
       <div class="impact-grid">
@@ -94,7 +71,6 @@
       </div>
     </div>
 
-    <!-- 开发设计文档初稿 -->
     <div class="panel design" v-if="result && result.design_doc">
       <h4>开发设计文档初稿</h4>
       <div class="sec">
@@ -123,75 +99,66 @@
 
     <div class="msg info" v-if="analyzing">分析中（RAG 定位 → 调用图传播 → LLM 合成设计文档）...</div>
   </div>
+</template>
 
-  <script src="config.js"></script>
-  <script src="api.js"></script>
-  <script src="auth.js"></script>
-  <script>requireAuth();</script>
-  <script src="repo.js"></script>
-  <script>
-    const SESSION_KEY = 'ai-code-wiki-impact-session';
-    Vue.createApp({
-      data() {
-        return {
-          repos: [],
-          form: { repo_id: 0, mode: 'nl', direction: 'both', max_depth: 2, branch: '', query: '', version: '' },
-          sessionId: localStorage.getItem(SESSION_KEY) || genSessionId(),
-          analyzing: false,
-          analyzed: false,
-          result: null,
-          error: ''
-        };
-      },
-      computed: {
-        enabledRepos() {
-          return enabledRepos(this.repos);
-        }
-      },
-      methods: {
-        async initRepos() {
-          try {
-            this.repos = await fetchRepos();
-            this.form.repo_id = defaultRepoId(this.enabledRepos);
-          } catch (e) { this.error = '加载仓库失败: ' + e.message; }
-        },
-        async analyze() {
-          if (!this.form.repo_id) { this.error = '请先选择仓库'; return; }
-          const payload = { repo_id: this.form.repo_id, max_depth: Number(this.form.max_depth) || 2, direction: this.form.direction };
-          if (this.form.mode === 'branch') {
-            if (!this.form.branch.trim()) { this.error = '请输入分支名'; return; }
-            payload.branch = this.form.branch.trim();
-          } else {
-            if (!this.form.query.trim()) { this.error = '请描述本次迭代要改什么'; return; }
-            payload.query = this.form.query.trim();
-          }
-          if (this.form.version.trim()) payload.version = this.form.version.trim();
-          payload.session_id = this.sessionId;
-          this.analyzing = true; this.error = ''; this.result = null;
-          try {
-            const data = await apiRequest('/impact/analyze', { method: 'POST', body: JSON.stringify(payload) });
-            this.result = data;
-            this.analyzed = true;
-            localStorage.setItem(SESSION_KEY, this.sessionId);
-          } catch (e) { this.error = '分析失败: ' + e.message; }
-          finally { this.analyzing = false; }
-        },
-        newSession() {
-          this.sessionId = genSessionId();
-          this.result = null;
-          this.analyzed = false;
-          this.error = '';
-          localStorage.setItem(SESSION_KEY, this.sessionId);
-        }
-      },
-      async mounted() {
-        await this.initRepos();
-      }
-    }).mount('#app');
+<script setup>
+import { computed, onMounted, reactive, ref } from 'vue'
+import { apiRequest } from '../api'
+import { fetchRepos, enabledRepos, defaultRepoId } from '../store/repo'
 
-    function genSessionId() {
-      return 'sess-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
-    }
-  </script>
-</body>
-</html>
+const SESSION_KEY = 'ai-code-wiki-impact-session'
+function genSessionId() {
+  return 'sess-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8)
+}
+
+const repos = ref([])
+const form = reactive({ repo_id: 0, mode: 'nl', direction: 'both', max_depth: 2, branch: '', query: '', version: '' })
+const sessionId = ref(localStorage.getItem(SESSION_KEY) || genSessionId())
+const analyzing = ref(false)
+const analyzed = ref(false)
+const result = ref(null)
+const error = ref('')
+
+const enabledRepos2 = computed(() => enabledRepos(repos.value))
+
+async function initRepos() {
+  try {
+    repos.value = await fetchRepos()
+    form.repo_id = defaultRepoId(enabledRepos2.value)
+  } catch (e) { error.value = '加载仓库失败: ' + e.message }
+}
+
+async function analyze() {
+  if (!form.repo_id) { error.value = '请先选择仓库'; return }
+  const payload = { repo_id: form.repo_id, max_depth: Number(form.max_depth) || 2, direction: form.direction }
+  if (form.mode === 'branch') {
+    if (!form.branch.trim()) { error.value = '请输入分支名'; return }
+    payload.branch = form.branch.trim()
+  } else {
+    if (!form.query.trim()) { error.value = '请描述本次迭代要改什么'; return }
+    payload.query = form.query.trim()
+  }
+  if (form.version.trim()) payload.version = form.version.trim()
+  payload.session_id = sessionId.value
+  analyzing.value = true
+  error.value = ''
+  result.value = null
+  try {
+    const data = await apiRequest('/impact/analyze', { method: 'POST', body: JSON.stringify(payload) })
+    result.value = data
+    analyzed.value = true
+    localStorage.setItem(SESSION_KEY, sessionId.value)
+  } catch (e) { error.value = '分析失败: ' + e.message }
+  finally { analyzing.value = false }
+}
+
+function newSession() {
+  sessionId.value = genSessionId()
+  result.value = null
+  analyzed.value = false
+  error.value = ''
+  localStorage.setItem(SESSION_KEY, sessionId.value)
+}
+
+onMounted(initRepos)
+</script>

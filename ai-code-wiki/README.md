@@ -40,7 +40,7 @@ AI 代码知识库系统。通过 CI 触发的代码解析任务，自动提取�
 | 多轮智能对话 | 基于 Redis 会话记忆的问答 | 滑动窗口 + 滚动摘要，支持连续追问；前端可切换「需求分析」模式 |
 | 迭代影响分析 | 变更 → 上游/下游影响点 + 设计文档初稿 | 函数级调用边（`function_call_edge`）双向 BFS 传播，LLM 合成设计文档并逐函数落库 `code_change_log` |
 | 登录鉴权 | 用户登录 / 令牌鉴权 | `user`/`user_token` 表 + bcrypt；Bearer Token（用户）+ X-Api-Secret（server-to-server）双通道 |
-| 科技感前端 | 深空科技主题 + 登录访问 | 共享 `style.css`（玻璃拟态/霓虹渐变/网格光效），所有页面强制登录 |
+| 科技感前端 | 深空科技主题 + 登录访问 | Vue3 + Vite 构建 SPA（history 路由，刷新不 404），所有页面路由守卫强制登录 |
 | 多模型调度 | 优先低价 + 故障降级熔断 | 收口于 ai-wiki-llm（Python），Redis 分布式熔断/限流 |
 | 平台能力 | API 密钥鉴权 / request_id 日志 / 健康检查 | MVP 单密钥，统一日志工具 |
 | 异步任务 | 任务队列抽象接口 | 已实现 memory（本地 channel）与 rabbitmq（持久化+手动 ACK），`TASK_QUEUE_DRIVER` 切换 |
@@ -204,7 +204,7 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | 方法 | 路径 | 说明 |
 | ---- | ---- | ---- |
 | GET | `/health` | 健康检查（跳过鉴权），探测 mysql / llm 连通性 |
-| GET | `/` | 首页，302 跳转 `/webstatic/docs.html`（极简前端入口） |
+| GET | `/` | SPA 入口，加载 Vue 构建产物（路由守卫决定跳登录页或 `/docs`） |
 | POST | `/api/v1/webhook/git_push` | GitLab/Gitee 分支 push 回调，自动触发解析任务（跳过 X-Api-Secret，使用 WEBHOOK_SECRET 签名鉴权） |
 | POST | `/api/v1/task/trigger` | 触发代码解析任务（CI 回调），body: `{task_id, branch}` |
 | GET | `/api/v1/task/status?task_id=xxx` | 查询任务状态 |
@@ -232,19 +232,31 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | POST | `/api/v1/auth/logout` | 登出（使当前令牌失效） |
 | GET | `/api/v1/report/basic` | 基础统计：总文档数 / 人工校正数 / 自动生成数 / 待复核数 / 模块总数 |
 
-### 4.1 极简前端
+### 4.1 前端（Vue3 + Vite SPA）
 
-`./webstatic` 提供原生 HTML + Vue3 CDN 页面（无构建，共享 `style.css` 深空科技主题），由后端 `/webstatic` 静态路由挂载。**除 `login.html` 外全部页面强制登录**（`auth.js` 守卫，未登录跳转登录页）：
+`./web` 为 Vue3 + Vite + vue-router（history 模式）单页应用，构建产物输出到 `./web/dist`。后端将 `/assets` 静态挂载到 `dist/assets`，并对所有非 `/api`、非 `/assets` 的 GET 请求回退到 `index.html`（history 模式刷新/直达深层路由不 404）。**路由守卫统一强制登录**（未登录跳转 `/login`，登录后可访问）：
 
-- `login.html` 登录页（默认管理员 `admin` / `admin123`，可用 `AUTH_ADMIN_PASSWORD` 覆盖默认密码）
-- `docs.html` 文档列表（分页 + 模块筛选，点击进入编辑）
-- `chat.html` 智能问答（多轮对话 + 会话列表/新建；可切换「需求分析」模式，粘贴产品修订/需求文档直接得到开发设计建议）
-- `impact.html` 迭代影响分析（分支/自然语言/函数 → 上游/下游影响点三栏 + 开发设计文档初稿 + 逐函数个性化变更记录）
-- `doc-edit.html` 文档编辑/详情（加载现有文档，`PUT /api/v1/doc/:doc_id/edit` 提交、支持重置，可进入历史版本页）
-- `doc-history.html` 文档历史版本（`GET /api/v1/doc/:doc_id/history` 列表 + 快照详情，查看修改前后原始 JSON）
-- `tasks.html` 任务管理（任务列表 / 状态查询 / 触发解析任务）
+| 路由 | 页面 | 说明 |
+| ---- | ---- | ---- |
+| `/login` | 登录页 | 默认管理员 `admin` / `admin123`，可用 `AUTH_ADMIN_PASSWORD` 覆盖默认密码 |
+| `/docs` | 文档列表 | 分页 + 模块筛选，点击进入编辑 |
+| `/chat` | 智能问答 | 多轮对话 + 会话列表/新建；可切换「需求分析」模式，粘贴产品修订/需求文档直接得到开发设计建议 |
+| `/impact` | 迭代影响分析 | 分支/自然语言/函数 → 上游/下游影响点三栏 + 开发设计文档初稿 + 逐函数个性化变更记录 |
+| `/doc-edit/:id` | 文档编辑/详情 | 加载现有文档，`PUT /api/v1/doc/:doc_id/edit` 提交、支持重置，可进入历史版本页 |
+| `/doc-history/:id` | 文档历史版本 | 历史列表 + 快照详情，查看修改前后原始 JSON |
+| `/tasks` | 任务管理 | 任务列表 / 状态查询 / 触发解析任务 |
+| `/repos` | 仓库管理 | 注册 / 启停代码仓库 |
 
-鉴权密钥在 `webstatic/config.js` 的 `apiSecret` 配置（与后端 `API_SECRET_KEY` 一致）。
+前端构建（本地开发或重新生成 `dist`，需 Node ≥ 18；国内网络已配置 npmmirror 镜像）：
+
+```bash
+cd web
+npm install --registry=https://registry.npmmirror.com
+npm run build    # 产物输出到 web/dist，容器内 bind mount 即时生效（无需重建镜像）
+npm run dev      # 本地 Vite 开发服务器（热更新），代理可自行配置到后端 8080
+```
+
+`Dockerfile` 为多阶段构建：`node` 阶段先构建前端，`golang` 阶段编译后端，最终镜像同时包含二进制与 `dist`。
 
 ### 4.2 典型调用示例
 

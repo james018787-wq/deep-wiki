@@ -1,4 +1,21 @@
-# ============ 构建阶段 ============
+# ============ 前端构建阶段（Vue3 + Vite） ============
+FROM node:18-alpine AS web
+
+WORKDIR /web
+
+# 国内网络使用 npmmirror 加速依赖下载
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ENV NPM_CONFIG_REGISTRY=$NPM_REGISTRY
+
+# 先拷贝依赖清单，利用 docker 层缓存加速构建
+COPY web/package*.json ./
+RUN npm install --no-audit --no-fund
+
+# 拷贝源码并构建
+COPY web/ .
+RUN npm run build
+
+# ============ Go 构建阶段 ============
 FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
@@ -28,8 +45,8 @@ WORKDIR /app
 # 拷贝二进制与配置文件
 COPY --from=builder /app/ai-code-wiki .
 COPY --from=builder /app/config/config.yaml ./config/config.yaml
-# 极简前端静态页面（Vue3 CDN，无构建），由 gin /webstatic 挂载
-COPY --from=builder /app/webstatic ./webstatic
+# 前端 SPA 构建产物（Vue3 + Vite），由 gin 根路径 + history fallback 挂载
+COPY --from=web /web/dist ./web/dist
 
 # 配置读取支持环境变量覆盖（DB_HOST/DB_PORT 等），默认走 config.yaml
 EXPOSE 8080

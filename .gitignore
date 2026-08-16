@@ -18,6 +18,10 @@ venv/
 .env
 .env.*
 
+# 前端构建产物与依赖（Vue3 + Vite）
+ai-code-wiki/web/node_modules/
+ai-code-wiki/web/dist/
+
 # 编辑器 / 系统文件
 .idea/
 .vscode/

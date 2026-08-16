@@ -8,7 +8,7 @@
 
 ```
                     ┌────────────┐    git push 回调
-    CI / GitLab ───▶│  ai-code-wiki (Go + Gin)   │◀────────────── 用户前端 (webstatic)
+    CI / GitLab ───▶│  ai-code-wiki (Go + Gin)   │◀────────────── 用户前端 (Vue SPA)
                     │                            │   /api/v1/*
                     └───────┬────────────┬───────┘
               所有 LLM 能力   │            │ HTTP

@@ -45,6 +45,8 @@ body::before {
   z-index: 0;
 }
 #app, .container { position: relative; z-index: 1; }
+/* 登录页居中（.page.is-login 由 App.vue 在 /login 路由下挂载） */
+.page.is-login { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -69,6 +71,10 @@ nav .brand {
   -webkit-background-clip: text; background-clip: text; color: transparent;
   text-shadow: 0 0 22px rgba(34, 211, 238, 0.35);
 }
+/* brand 是 <a>（router-link），覆盖 nav a 的链接样式 */
+nav a.brand { padding: 0; text-decoration: none; }
+nav a.brand:hover { background: none; color: transparent; }
+nav .links { display: flex; align-items: center; gap: 4px; }
 nav a {
   color: var(--text-dim); text-decoration: none; font-weight: 500;
   padding: 8px 14px; border-radius: 8px; transition: all .18s ease;

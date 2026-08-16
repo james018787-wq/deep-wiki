@@ -89,8 +89,8 @@ services:
     volumes:
       - ./repo_cache:/app/repo_cache
       - ./testrepo:/app/testrepo:ro
-      # webstatic 前端目录挂载进容器，host 修改即生效，无需重建镜像
-      - ./ai-code-wiki/webstatic:/app/webstatic:ro
+      # 前端 SPA 构建产物，host npm run build 即生效，无需重建镜像
+      - ./ai-code-wiki/web/dist:/app/web/dist:ro
     #开发阶段建议注释，本地IDE运行go；上线打开
 #    deploy:
 #      resources:

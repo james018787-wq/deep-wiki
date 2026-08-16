@@ -3,6 +3,7 @@ package router
 
 import (
 	"net/http"
+	"strings"
 
 	"ai-code-wiki/internal/handler"
 	"ai-code-wiki/internal/middleware"
@@ -28,8 +29,28 @@ func Register(r *gin.Engine, h *handler.Handler) {
 	r.POST("/api/v1/auth/login", h.Auth.Login)
 
 	// 兜底：404 / 405 统一 JSON 返回
-	r.NoRoute(middleware.NotFoundHandler)
+	// 前端 SPA history 模式 fallback：非 /api、非 /assets 的 GET 请求回退到 index.html，
+	// 保证刷新/直达深层路由不 404。
+	r.NoRoute(middleware.NoCache(), func(c *gin.Context) {
+		if c.Request.Method == http.MethodGet &&
+			!strings.HasPrefix(c.Request.URL.Path, "/api/") &&
+			!strings.HasPrefix(c.Request.URL.Path, "/assets/") {
+			c.File("./web/dist/index.html")
+			return
+		}
+		middleware.NotFoundHandler(c)
+	})
 	r.NoMethod(middleware.NoMethodHandler)
+
+	// ========== 前端 SPA（Vue3 + Vite 构建产物） ==========
+	// /assets 下为构建后的静态资源；其余非 /api 的 GET 请求统一回退到 index.html
+	// （vue-router history 模式，刷新/直达深层路由不 404）。
+	spa := r.Group("", middleware.NoCache())
+	spa.Static("/assets", "./web/dist/assets")
+	// 首页加载 SPA 入口（路由守卫决定跳登录页或文档列表）
+	r.GET("/", middleware.NoCache(), func(c *gin.Context) {
+		c.File("./web/dist/index.html")
+	})
 
 	api := r.Group("/api/v1")
 	// 统一鉴权：Bearer Token（用户登录）或 X-Api-Secret（server-to-server）
@@ -108,14 +129,4 @@ func Register(r *gin.Engine, h *handler.Handler) {
 		// 基础统计（文档/校正/待复核/模块数量）
 		api.GET("/report/basic", h.Report.Basic)
 	}
-
-	// ========== 极简前端静态页面（原生 HTML + Vue3 CDN，无构建） ==========
-	// 挂载 ./webstatic 目录，不经过 /api/v1 鉴权分组；
-	// 加 NoCache 中间件避免浏览器强缓存导致页面/脚本不一致（前端 bind mount 实时开发）。
-	web := r.Group("/webstatic", middleware.NoCache())
-	web.Static("", "./webstatic")
-	// 首页默认跳转登录页（登录后进入文档列表）
-	r.GET("/", func(c *gin.Context) {
-		c.Redirect(http.StatusFound, "/webstatic/login.html")
-	})
 }
