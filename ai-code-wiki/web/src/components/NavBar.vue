@@ -1,6 +1,6 @@
 <template>
   <nav class="nav">
-    <router-link class="brand" to="/docs">AI·CODE WIKI</router-link>
+    <router-link class="brand" to="/docs"><img class="brand-logo" src="/logo.svg" alt="logo">AI·CODE WIKI</router-link>
     <div class="links">
       <router-link to="/docs" active-class="active">文档列表</router-link>
       <router-link to="/chat" active-class="active">智能问答</router-link>

@@ -1,5 +1,7 @@
 <div align="center">
 
+![AI·CODE WIKI](ai-code-wiki/web/public/logo.svg)
+
 # AI·CODE WIKI
 
 **AI 驱动的代码知识库：代码 → 业务文档 → 智能问答 / 影响分析 / 安全扫描**

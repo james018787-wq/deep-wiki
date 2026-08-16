@@ -73,6 +73,11 @@ nav .brand {
 }
 /* brand 是 <a>（router-link），覆盖 nav a 的链接样式 */
 nav a.brand { padding: 0; text-decoration: none; }
+nav a.brand .brand-logo {
+  display: inline-block;
+  width: 26px; height: 26px; margin-right: 8px; vertical-align: -6px;
+  filter: drop-shadow(0 0 8px rgba(34, 211, 238, 0.6));
+}
 /* 渐变文字靠 background-clip:text 渲染；hover 时显式保留渐变与裁剪，
    否则通用 nav a:hover 的 background 简写会重置 clip、把渐变清成不可见 */
 nav a.brand:hover {
