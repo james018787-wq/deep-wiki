@@ -113,35 +113,35 @@ async function doLogin() {
 .stars { position: absolute; inset: -60px; pointer-events: none; }
 .stars.s-sm {
   background-image:
-    radial-gradient(1px 1px at 22px 30px, rgba(255,255,255,.85), transparent 55%),
-    radial-gradient(1px 1px at 96px 128px, rgba(255,255,255,.6), transparent 55%),
-    radial-gradient(1px 1px at 150px 60px, rgba(186,230,253,.8), transparent 55%),
-    radial-gradient(1px 1px at 60px 190px, rgba(255,255,255,.5), transparent 55%),
-    radial-gradient(1px 1px at 190px 220px, rgba(186,230,253,.7), transparent 55%),
-    radial-gradient(1px 1px at 210px 100px, rgba(255,255,255,.65), transparent 55%);
+    radial-gradient(2px 2px at 22px 30px, rgba(255,255,255,.95), transparent 55%),
+    radial-gradient(2px 2px at 96px 128px, rgba(255,255,255,.75), transparent 55%),
+    radial-gradient(2px 2px at 150px 60px, rgba(186,230,253,.9), transparent 55%),
+    radial-gradient(2px 2px at 60px 190px, rgba(255,255,255,.7), transparent 55%),
+    radial-gradient(2px 2px at 190px 220px, rgba(186,230,253,.85), transparent 55%),
+    radial-gradient(2px 2px at 210px 100px, rgba(255,255,255,.8), transparent 55%);
   background-size: 240px 240px;
   animation: twinkle 5s ease-in-out infinite;
 }
 .stars.s-md {
   background-image:
-    radial-gradient(1.4px 1.4px at 40px 45px, rgba(255,255,255,.95), transparent 55%),
-    radial-gradient(1.4px 1.4px at 130px 160px, rgba(199,210,254,.9), transparent 55%),
-    radial-gradient(1.4px 1.4px at 205px 40px, rgba(255,255,255,.85), transparent 55%),
-    radial-gradient(1.4px 1.4px at 80px 230px, rgba(199,210,254,.8), transparent 55%),
-    radial-gradient(1.4px 1.4px at 230px 180px, rgba(255,255,255,.9), transparent 55%);
+    radial-gradient(3px 3px at 40px 45px, #fff, transparent 58%),
+    radial-gradient(3px 3px at 130px 160px, rgba(199,210,254,1), transparent 58%),
+    radial-gradient(3px 3px at 205px 40px, rgba(255,255,255,.95), transparent 58%),
+    radial-gradient(3px 3px at 80px 230px, rgba(199,210,254,.9), transparent 58%),
+    radial-gradient(3px 3px at 230px 180px, #fff, transparent 58%);
   background-size: 280px 280px;
   animation: twinkle 7s ease-in-out -2s infinite;
 }
 .stars.s-lg {
   background-image:
-    radial-gradient(2px 2px at 70px 90px, #fff, transparent 60%),
-    radial-gradient(2px 2px at 190px 210px, #fff, transparent 60%),
-    radial-gradient(2px 2px at 250px 70px, rgba(186,230,253,1), transparent 60%),
-    radial-gradient(2px 2px at 30px 260px, #fff, transparent 60%);
+    radial-gradient(4px 4px at 70px 90px, #fff, transparent 62%),
+    radial-gradient(4px 4px at 190px 210px, #fff, transparent 62%),
+    radial-gradient(4px 4px at 250px 70px, rgba(186,230,253,1), transparent 62%),
+    radial-gradient(4px 4px at 30px 260px, #fff, transparent 62%);
   background-size: 320px 320px;
   animation: twinkle 9s ease-in-out -4s infinite;
 }
-@keyframes twinkle { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes twinkle { 0%, 100% { opacity: .7; } 50% { opacity: 1; } }
 
 /* 流星 */
 .shoot {
