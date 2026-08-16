@@ -38,10 +38,6 @@ const (
 // impactMaxQuerySeeds 自然语言定位的变更函数种子数量上限（含关键字兜底）。
 const impactMaxQuerySeeds = 8
 
-// impactRAGSeedLimit 向量召回直接作为变更种子的数量上限。
-// 影响分析要求"直接修改"集合收敛，取最相关的少量候选，避免跨模块关联函数卷入变更集合。
-const impactRAGSeedLimit = 4
-
 // FuncRef 影响分析中的函数引用（模块+函数+文件）。
 type FuncRef struct {
 	Module  string `json:"module"`  // 业务模块
@@ -272,23 +268,111 @@ func mergeFuncSeeds(prev, next []*FuncRef) []*FuncRef {
 }
 
 // locateFuncsByQuery 自然语言变更描述定位变更函数：
-//  1. 优先向量召回【不做跨模块扩充】的直接相关文档（按仓库隔离）；
-//  2. 向量不可用或未召回时，退化为 MySQL 关键字模糊匹配；
-//  3. 结果映射为影响传播的变更种子（上限 impactMaxQuerySeeds）。
+//  1. 混合召回（向量 ∪ 关键词，不做跨模块扩充）相关文档；
+//  2. 相关度过滤：文档必须与描述共享有效词元（英文词 / 中文二元组），
+//     避免把仅向量弱相关的无关函数当作"直接修改"种子导致设计文档胡编；
+//  3. 无可信相关函数时返回明确引导，而不是基于错误前提继续分析。
 func (s *ImpactService) locateFuncsByQuery(ctx context.Context, repoID int64, query string) ([]*FuncRef, error) {
-	docs, ragErr := s.search.RetrieveTargetDocs(ctx, repoID, query)
-	if ragErr == nil && len(docs) > 0 {
-		return funcsFromDocs(docs, impactRAGSeedLimit), nil
-	}
+	docs, ragErr := s.search.RetrieveHybridDocs(ctx, repoID, query)
 	if ragErr != nil {
-		logger.Warn(ctx, "向量定位变更函数失败，退化关键字匹配: %v", ragErr)
+		logger.Warn(ctx, "混合召回失败: %v", ragErr)
 	}
+	relevant := filterDocsByQuery(docs, query)
+	if len(relevant) == 0 {
+		return nil, common.NewError(common.CodeNotFound,
+			"知识库中未找到与描述直接相关的现有函数。迭代影响分析用于评估对现有代码的改动；"+
+				"若为新增功能（如多用户/RBAC 等新能力），建议改用「需求分析」模式，或先实现相关代码后重新分析。")
+	}
+	return funcsFromDocs(relevant, impactMaxQuerySeeds), nil
+}
 
-	kwDocs, err := s.docRepo.SearchByKeyword(repoID, query, impactMaxQuerySeeds)
-	if err != nil {
-		return nil, common.WrapError(common.CodeInternalError, "定位变更函数失败", err)
+// queryTerms 提取查询中的有效词元：英文单词（去停用词）+ 中文二元组。
+// 用于判断候选文档与查询描述的相关度。
+func queryTerms(query string) []string {
+	seen := make(map[string]struct{})
+	var terms []string
+	for _, w := range enWordRe.FindAllString(query, -1) {
+		lw := strings.ToLower(w)
+		if enStopwords[lw] {
+			continue
+		}
+		if _, ok := seen[lw]; !ok {
+			seen[lw] = struct{}{}
+			terms = append(terms, lw)
+		}
 	}
-	return funcsFromDocs(kwDocs, impactMaxQuerySeeds), nil
+	for _, seg := range hanRe.FindAllString(query, -1) {
+		runes := []rune(seg)
+		if len(runes) == 0 {
+			continue
+		}
+		if len(runes) == 1 {
+			if _, ok := seen[seg]; !ok {
+				seen[seg] = struct{}{}
+				terms = append(terms, seg)
+			}
+			continue
+		}
+		for i := 0; i < len(runes)-1; i++ {
+			bigram := string(runes[i : i+2])
+			if _, ok := seen[bigram]; !ok {
+				seen[bigram] = struct{}{}
+				terms = append(terms, bigram)
+			}
+		}
+	}
+	return terms
+}
+
+// filterDocsByQuery 仅保留与查询共享有效词元的文档（相关度过滤）。
+// 要求至少命中 2 个词元，避免仅共享通用词（如"编辑/管理"）的无关函数混入种子。
+// 无有效词元（如纯符号查询）时不做过滤，保留全部候选。
+func filterDocsByQuery(docs []*model.CodeFunctionDoc, query string) []*model.CodeFunctionDoc {
+	if len(docs) == 0 {
+		return nil
+	}
+	terms := queryTerms(query)
+	if len(terms) == 0 {
+		return docs
+	}
+	var out []*model.CodeFunctionDoc
+	for _, d := range docs {
+		if d == nil {
+			continue
+		}
+		text := strings.ToLower(strings.Join([]string{
+			d.ModuleName, d.FuncName, d.FilePath, d.Summary, d.ProcessFlow, d.RiskPoint,
+		}, " "))
+		if matchedTermCount(text, terms) >= 2 {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// matchedTermCount 统计文本命中词元个数。
+func matchedTermCount(text string, terms []string) int {
+	n := 0
+	for _, t := range terms {
+		if strings.Contains(text, t) {
+			n++
+		}
+	}
+	return n
+}
+
+// enWordRe 匹配英文单词（3 个及以上字母/数字/下划线）。
+var enWordRe = regexp.MustCompile(`[A-Za-z][A-Za-z0-9_]{2,}`)
+
+// hanRe 匹配中文字符连续段。
+var hanRe = regexp.MustCompile(`\p{Han}+`)
+
+// enStopwords 英文常见停用词（对代码查询无语义）。
+var enStopwords = map[string]bool{
+	"the": true, "and": true, "for": true, "with": true, "are": true, "was": true,
+	"this": true, "that": true, "from": true, "into": true, "have": true, "has": true,
+	"not": true, "you": true, "can": true, "will": true, "how": true, "what": true,
+	"but": true, "its": true, "all": true, "any": true,
 }
 
 // funcsFromDocs 将文档列表映射为变更函数种子（去重，带上文件与摘要）。

@@ -7,11 +7,6 @@
         <select v-model="form.repo_id">
           <option v-for="r in enabledRepos2" :key="r.id" :value="r.id">{{ r.repo_name }}</option>
         </select>
-        <label>方式：</label>
-        <select v-model="form.mode">
-          <option value="nl">自然语言描述变更</option>
-          <option value="branch">分支（自动 diff）</option>
-        </select>
         <label>方向：</label>
         <select v-model="form.direction">
           <option value="both">上游+下游</option>
@@ -26,15 +21,12 @@
         </select>
       </div>
       <div class="row" style="margin-bottom:10px;">
-        <input v-if="form.mode === 'branch'" v-model="form.branch" placeholder="分支名，如 feature/impact-demo（对比默认分支）" style="flex:1;min-width:200px;">
-        <textarea v-else v-model="form.query" placeholder="用自然语言描述本次迭代要改什么，例如：我要改支付回调的签名校验逻辑（支持多轮追问，会累计上下文）" style="height:500px;flex:1;min-width:0;resize:vertical;"></textarea>
+        <input v-model="form.branch" placeholder="分支名，如 feature/order-refactor（自动 diff 对比默认分支，精准推导本次改动）" style="flex:1;min-width:200px;">
       </div>
       <div class="row">
         <input v-model="form.version" placeholder="迭代版本号（可选，写入变更日志）" style="flex:1;min-width:160px;">
         <button :disabled="analyzing" @click="analyze">开始分析</button>
-        <button class="btn-ghost" :disabled="analyzing" @click="newSession">清空会话（新话题）</button>
       </div>
-      <div class="msg ok" v-if="sessionId && analyzed">会话：{{ sessionId }}（多轮追问将累计变更函数）</div>
       <div class="msg err" v-if="error">{{ error }}</div>
     </div>
 
@@ -149,7 +141,7 @@
       <div class="meta" v-if="result.used_model">模型：{{ result.used_model }} ｜ 本次估算成本：￥{{ result.cost != null ? result.cost.toFixed(5) : '-' }}</div>
     </div>
 
-    <div class="msg info" v-if="analyzing">分析中（RAG 定位 → 调用图传播 → LLM 合成设计文档）...</div>
+    <div class="msg info" v-if="analyzing">分析中（git diff 推导变更 → 调用图传播 → LLM 合成设计文档）...</div>
   </div>
 </template>
 
@@ -159,16 +151,9 @@ import { apiRequest } from '../api'
 import { fetchRepos, enabledRepos, defaultRepoId } from '../store/repo'
 import CallGraph from '../components/CallGraph.vue'
 
-const SESSION_KEY = 'ai-code-wiki-impact-session'
-function genSessionId() {
-  return 'sess-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8)
-}
-
 const repos = ref([])
-const form = reactive({ repo_id: 0, mode: 'nl', direction: 'both', max_depth: 2, branch: '', query: '', version: '' })
-const sessionId = ref(localStorage.getItem(SESSION_KEY) || genSessionId())
+const form = reactive({ repo_id: 0, direction: 'both', max_depth: 2, branch: '', version: '' })
 const analyzing = ref(false)
-const analyzed = ref(false)
 const result = ref(null)
 const error = ref('')
 
@@ -183,35 +168,24 @@ async function initRepos() {
 
 async function analyze() {
   if (!form.repo_id) { error.value = '请先选择仓库'; return }
-  const payload = { repo_id: form.repo_id, max_depth: Number(form.max_depth) || 2, direction: form.direction }
-  if (form.mode === 'branch') {
-    if (!form.branch.trim()) { error.value = '请输入分支名'; return }
-    payload.branch = form.branch.trim()
-  } else {
-    if (!form.query.trim()) { error.value = '请描述本次迭代要改什么'; return }
-    payload.query = form.query.trim()
+  if (!form.branch.trim()) { error.value = '请输入分支名'; return }
+  const payload = {
+    repo_id: form.repo_id,
+    branch: form.branch.trim(),
+    max_depth: Number(form.max_depth) || 2,
+    direction: form.direction
   }
   if (form.version.trim()) payload.version = form.version.trim()
-  payload.session_id = sessionId.value
   analyzing.value = true
   error.value = ''
   result.value = null
   try {
     const data = await apiRequest('/impact/analyze', { method: 'POST', body: JSON.stringify(payload) })
     result.value = data
-    analyzed.value = true
-    localStorage.setItem(SESSION_KEY, sessionId.value)
   } catch (e) { error.value = '分析失败: ' + e.message }
   finally { analyzing.value = false }
 }
 
-function newSession() {
-  sessionId.value = genSessionId()
-  result.value = null
-  analyzed.value = false
-  error.value = ''
-  localStorage.setItem(SESSION_KEY, sessionId.value)
-}
-
 onMounted(initRepos)
+
 </script>

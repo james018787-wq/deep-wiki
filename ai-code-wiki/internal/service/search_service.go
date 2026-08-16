@@ -221,6 +221,24 @@ func (s *SearchService) RetrieveTargetDocs(ctx context.Context, repoID int64, qu
 	return s.loadDocs(ctx, repoID, candidateIDs)
 }
 
+// RetrieveHybridDocs 混合召回候选文档（向量 ∪ 关键词，不做跨模块扩充）。
+// 供影响分析定位变更函数种子：关键词命中补足向量语义召回不到的相关函数。
+func (s *SearchService) RetrieveHybridDocs(ctx context.Context, repoID int64, query string) ([]*model.CodeFunctionDoc, error) {
+	candidateIDs, err := s.vectorRecall(ctx, repoID, query)
+	if err != nil {
+		return nil, err
+	}
+	keywordDocs, kwErr := s.keywordRecall(ctx, repoID, query)
+	if kwErr != nil {
+		logger.Warn(ctx, "关键词召回失败（忽略）repo_id=%d err=%v", repoID, kwErr)
+	}
+	merged := mergeCandidateIDs(candidateIDs, keywordDocs)
+	if len(merged) == 0 {
+		return nil, nil
+	}
+	return s.loadDocs(ctx, repoID, merged)
+}
+
 // vectorRecall 向量初步召回（向量侧按仓库过滤，提升函数级检索精度；仅做候选 doc_id 检索，不做跨模块扩充）。
 func (s *SearchService) vectorRecall(ctx context.Context, repoID int64, query string) ([]int64, error) {
 	if s.llmBaseURL == "" || s.vc == nil {
