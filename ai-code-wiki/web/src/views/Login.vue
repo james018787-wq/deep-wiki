@@ -224,13 +224,31 @@ async function doLogin() {
 
 /* ============ 登录卡片 ============ */
 .login-wrap { position: relative; z-index: 1; width: 380px; }
+/* 卡片四周光晕（扩散 + 呼吸脉动） */
+.login-wrap::before {
+  content: ""; position: absolute; inset: -34px; z-index: -1; border-radius: 30px;
+  background: radial-gradient(circle at 50% 50%,
+    rgba(34, 211, 238, 0.26) 0%,
+    rgba(139, 92, 246, 0.16) 45%,
+    transparent 72%);
+  filter: blur(26px);
+  animation: cardGlow 5.5s ease-in-out infinite alternate;
+}
+@keyframes cardGlow {
+  from { opacity: .72; transform: scale(.98); }
+  to   { opacity: 1.1; transform: scale(1.03); }
+}
 .login-card {
   background: rgba(18, 26, 44, 0.8);
-  border: 1px solid rgba(56, 189, 248, 0.25);
+  border: 1px solid rgba(56, 189, 248, 0.35);
   border-radius: 16px;
   padding: 36px 34px;
   backdrop-filter: blur(14px);
-  box-shadow: 0 24px 70px rgba(2, 8, 20, 0.7), 0 0 40px rgba(34, 211, 238, 0.12);
+  box-shadow:
+    0 24px 70px rgba(2, 8, 20, 0.7),
+    0 0 0 1px rgba(34, 211, 238, 0.14),
+    0 0 42px rgba(34, 211, 238, 0.34),
+    0 0 96px rgba(139, 92, 246, 0.22);
 }
 .login-card h1 {
   margin: 0 0 6px; font-size: 20px; letter-spacing: 2px; color: var(--text-bright);
