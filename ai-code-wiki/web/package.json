@@ -8,6 +8,7 @@
     "build": "vite build"
   },
   "dependencies": {
+    "d3": "^7.9.0",
     "prismjs": "^1.30.0",
     "vue": "^3.4.29",
     "vue-router": "^4.3.3"

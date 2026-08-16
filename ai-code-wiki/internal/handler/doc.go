@@ -119,6 +119,22 @@ func (h *DocHandler) GetDocSource(c *gin.Context) {
 	common.Success(c, src)
 }
 
+// GetDocGraph 查询文档对应函数的调用图（上游调用方 + 下游被调用方 + 自身）。
+//
+//	GET /api/v1/doc/:doc_id/graph
+func (h *DocHandler) GetDocGraph(c *gin.Context) {
+	docID, ok := parseDocID(c)
+	if !ok {
+		return
+	}
+	graph, err := h.svc.Doc.GetDocGraph(docID)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	common.Success(c, graph)
+}
+
 // EditDoc 人工校正业务文档。
 //
 //	PUT /api/v1/doc/:doc_id/edit

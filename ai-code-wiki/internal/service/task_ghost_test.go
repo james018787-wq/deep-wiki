@@ -22,7 +22,11 @@ func TestCleanupGhostDocs(t *testing.T) {
 	repoInfo := &model.CodeRepo{ID: 1, RepoName: "testrepo"}
 	file := "order/service.go"
 
+	// 幂等：先清空该文件的残留文档（防止中断运行遗留记录撞唯一键 idx_file_func）
+	db.Unscoped().Where("repo_id = ? AND file_path = ?", 1, file).Delete(&model.CodeFunctionDoc{})
+
 	// 种子：文件中 3 个函数文档，其中 2 个在当前代码中已不存在（含 1 个人工校正）
+	var seedIDs []int64
 	docs := []*model.CodeFunctionDoc{
 		{RepoID: 1, ModuleName: "order", FilePath: file, FuncName: "Keep", Summary: "保留", ContentSource: common.ContentSourceAuto},
 		{RepoID: 1, ModuleName: "order", FilePath: file, FuncName: "Gone", Summary: "已删除", ContentSource: common.ContentSourceAuto},
@@ -32,6 +36,7 @@ func TestCleanupGhostDocs(t *testing.T) {
 		if err := db.Create(d).Error; err != nil {
 			t.Fatalf("seed 文档失败: %v", err)
 		}
+		seedIDs = append(seedIDs, d.ID)
 	}
 
 	// 当前代码仅剩 Keep 与新增 NewFunc
@@ -51,9 +56,9 @@ func TestCleanupGhostDocs(t *testing.T) {
 		t.Fatalf("Gone/GoneToo 应被逻辑删除, got count=%d", goneCount)
 	}
 
-	// 断言 2：写入 2 条删除操作日志
+	// 断言 2：仅本次种子文档产生 2 条删除操作日志
 	var logCount int64
-	db.Model(&model.DocModifyLog{}).Where("operate_type = ?", common.DocOperateDelete).Count(&logCount)
+	db.Model(&model.DocModifyLog{}).Where("operate_type = ? AND doc_id IN ?", common.DocOperateDelete, seedIDs).Count(&logCount)
 	if logCount != 2 {
 		t.Fatalf("期望 2 条删除日志, got %d", logCount)
 	}

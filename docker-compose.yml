@@ -88,6 +88,8 @@ services:
       GIT_CLONE_DIR: /app/repo_cache
       # 仓库访问令牌加密密钥（hex 32 字节，可选：未配置则明文存储，仅限开发）
       REPO_TOKEN_KEY: "${REPO_TOKEN_KEY}"
+      # 单次解析任务 LLM 生成调用预算上限（0=不限，超出后跳过剩余函数，控制成本）
+      LLM_MAX_CALLS_PER_TASK: "${LLM_MAX_CALLS_PER_TASK}"
     volumes:
       - ./repo_cache:/app/repo_cache
       - ./testrepo:/app/testrepo:ro

@@ -86,11 +86,12 @@ type TaskQueueConfig struct {
 
 // LLMConfig 大模型配置。
 type LLMConfig struct {
-	Provider string `yaml:"provider"` // openai / ollama / deepseek ...
-	BaseURL  string `yaml:"base_url"`
-	APIKey   string `yaml:"api_key"`
-	Model    string `yaml:"model"`
-	Timeout  int    `yaml:"timeout"` // LLM 调用超时（秒），默认 60（LLM_TIMEOUT 覆盖）
+	Provider        string `yaml:"provider"` // openai / ollama / deepseek ...
+	BaseURL         string `yaml:"base_url"`
+	APIKey          string `yaml:"api_key"`
+	Model           string `yaml:"model"`
+	Timeout         int    `yaml:"timeout"`            // LLM 调用超时（秒），默认 60（LLM_TIMEOUT 覆盖）
+	MaxCallsPerTask int    `yaml:"max_calls_per_task"` // 单次解析任务 LLM 生成调用预算上限（0=不限，LLM_MAX_CALLS_PER_TASK）
 }
 
 // Load 从指定路径加载配置文件。
@@ -169,6 +170,7 @@ func (c *Config) ApplyEnv() {
 	// LLM 服务地址（Python 微服务）与调用超时
 	c.LLM.BaseURL = envStr("LLM_SERVICE_URL", c.LLM.BaseURL)
 	c.LLM.Timeout = envInt("LLM_TIMEOUT", c.LLM.Timeout)
+	c.LLM.MaxCallsPerTask = envInt("LLM_MAX_CALLS_PER_TASK", c.LLM.MaxCallsPerTask)
 
 	// 克隆目录根（多仓库：每个仓库独立子目录 {root}/{repo_name}）
 	c.Git.CloneDir = envStr("GIT_CLONE_DIR", c.Git.CloneDir)

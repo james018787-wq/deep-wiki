@@ -67,14 +67,18 @@ type ImpactAnalyzeReq struct {
 
 // ImpactAnalyzeResult 影响分析结果。
 type ImpactAnalyzeResult struct {
-	RepoID      int64               `json:"repo_id"`
-	Changed     []*FuncRef          `json:"changed"`        // 直接修改
-	Reverse     []*FuncRef          `json:"reverse_impact"` // 上游调用方（按深度升序）
-	Forward     []*FuncRef          `json:"forward_impact"` // 下游被调用方（按深度升序）
-	DesignDoc   *ImpactDesignDoc    `json:"design_doc"`     // 迭代开发设计文档初稿（LLM 合成）
-	FuncChanges []*ImpactFuncChange `json:"func_changes"`   // 每个被修改函数的个性化变更记录（LLM 合成）
-	UsedModel   string              `json:"used_model"`     // 合成设计文档实际使用的模型
-	Cost        float64             `json:"cost"`           // 本次 LLM 合成调用估算成本（元）
+	RepoID         int64               `json:"repo_id"`
+	Changed        []*FuncRef          `json:"changed"`           // 直接修改
+	Reverse        []*FuncRef          `json:"reverse_impact"`    // 上游调用方（按深度升序）
+	Forward        []*FuncRef          `json:"forward_impact"`    // 下游被调用方（按深度升序）
+	DesignDoc      *ImpactDesignDoc    `json:"design_doc"`        // 迭代开发设计文档初稿（LLM 合成）
+	FuncChanges    []*ImpactFuncChange `json:"func_changes"`      // 每个被修改函数的个性化变更记录（LLM 合成）
+	APISchema      []*APISchemaChange  `json:"api_schema"`        // 接口/API 签名变更（破坏性变更检测，branch 模式）
+	DBSchemaChange []*DBSchemaChange   `json:"db_schema_changes"` // 数据库表结构变更（branch 模式）
+	TestFiles      []*TestFileRef      `json:"test_files"`        // 建议回归测试文件（引用受影响函数）
+	Graph          *CallGraphData      `json:"graph"`             // 受影响函数调用图（D3 可视化）
+	UsedModel      string              `json:"used_model"`        // 合成设计文档实际使用的模型
+	Cost           float64             `json:"cost"`              // 本次 LLM 合成调用估算成本（元）
 }
 
 // ImpactDesignDoc 迭代影响分析产出的开发设计文档初稿。
@@ -171,9 +175,14 @@ func (s *ImpactService) Analyze(ctx context.Context, req *ImpactAnalyzeReq) (*Im
 
 	var seeds []*FuncRef
 	var err error
+	var branchInfo *branchDiffInfo
 	switch {
 	case strings.TrimSpace(req.Branch) != "":
-		seeds, err = s.deriveFuncsFromBranch(req.RepoID, strings.TrimSpace(req.Branch))
+		branchInfo, err = s.deriveFuncsFromBranch(req.RepoID, strings.TrimSpace(req.Branch))
+		if err != nil {
+			return nil, err
+		}
+		seeds = branchInfo.seeds
 	case strings.TrimSpace(req.Query) != "":
 		seeds, err = s.locateFuncsByQuery(ctx, req.RepoID, strings.TrimSpace(req.Query))
 	case len(req.Functions) > 0:
@@ -203,6 +212,16 @@ func (s *ImpactService) Analyze(ctx context.Context, req *ImpactAnalyzeReq) (*Im
 	}
 	if sessionID != "" {
 		s.putSession(sessionID, result)
+	}
+
+	// 影响分析增强（仅 branch 模式有 git diff 上下文）：
+	// 接口签名变更 + 数据库表结构变更 + 建议回归测试圈定
+	if branchInfo != nil {
+		result.APISchema = branchInfo.apiChanges
+		result.DBSchemaChange = branchInfo.dbChanges
+		if branchInfo.cloneDir != "" {
+			result.TestFiles = s.locateTestFiles(branchInfo.cloneDir, result)
+		}
 	}
 
 	// LLM 合成开发设计文档初稿 + 沉淀 code_change_log
@@ -298,9 +317,18 @@ func funcsFromDocs(docs []*model.CodeFunctionDoc, limit int) []*FuncRef {
 	return seeds
 }
 
+// branchDiffInfo 分支 diff 推导的完整上下文（影响分析增强使用）。
+type branchDiffInfo struct {
+	seeds      []*FuncRef         // 变更函数种子
+	apiChanges []*APISchemaChange // 接口/API 签名变更
+	dbChanges  []*DBSchemaChange  // 数据库表结构变更
+	cloneDir   string             // 仓库克隆目录（测试用例圈定用）
+}
+
 // deriveFuncsFromBranch 从任务分支 diff 推导本次迭代变更的函数（对比默认分支）。
-// 读取 diff 变更的 .go 文件并 AST 解析出函数名，作为影响传播的种子。
-func (s *ImpactService) deriveFuncsFromBranch(repoID int64, branch string) ([]*FuncRef, error) {
+// 读取 diff 变更的 .go 文件并 AST 解析出函数名，作为影响传播的种子；
+// 同时顺带检测接口/API 签名变更与数据库表结构变更。
+func (s *ImpactService) deriveFuncsFromBranch(repoID int64, branch string) (*branchDiffInfo, error) {
 	repoInfo, err := s.repoRepo.GetByID(repoID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -317,38 +345,248 @@ func (s *ImpactService) deriveFuncsFromBranch(repoID int64, branch string) ([]*F
 		return nil, common.WrapError(common.CodeInternalError, "拉取代码失败", err)
 	}
 
-	files, err := git.GetDiffFiles(cloneDir, "origin/"+repoInfo.DefaultBranch, "origin/"+branch)
+	baseRef := "origin/" + repoInfo.DefaultBranch
+	files, err := git.GetDiffFiles(cloneDir, baseRef, "origin/"+branch)
 	if err != nil {
 		return nil, common.WrapError(common.CodeInternalError, "获取变更文件失败", err)
 	}
 
+	info := &branchDiffInfo{cloneDir: cloneDir}
 	var seeds []*FuncRef
 	seen := make(map[string]struct{})
 	for _, file := range files {
-		if !strings.HasSuffix(file, ".go") {
+		if strings.HasSuffix(file, "_test.go") {
+			continue // 测试文件不参与业务变更种子与 API 检测（仅用于回归测试圈定）
+		}
+		if strings.HasSuffix(file, ".go") {
+			content, err := git.ReadFile(cloneDir, file)
+			if err != nil {
+				logger.Warn(context.Background(), "读取变更文件失败 %s: %v", file, err)
+				continue
+			}
+			items, err := astgo.ParseGoFile(content)
+			if err != nil {
+				logger.Warn(context.Background(), "解析变更文件失败 %s: %v", file, err)
+				continue
+			}
+			module := moduleNameFromPath(file)
+			for _, it := range items {
+				key := module + "." + it.FuncName
+				if _, dup := seen[key]; dup {
+					continue
+				}
+				seen[key] = struct{}{}
+				seeds = append(seeds, &FuncRef{Module: module, Func: it.FuncName, File: file, Kind: ImpactKindChanged})
+			}
+		}
+	}
+	info.seeds = seeds
+
+	// 接口/API 签名变更检测（仅 .go 文件，对比默认分支旧版本）
+	info.apiChanges = s.detectAPISchema(cloneDir, baseRef, files)
+	// 数据库表结构变更检测（diff 中的 SQL 文件）
+	info.dbChanges = s.detectDBSchema(repoID, cloneDir, files)
+	return info, nil
+}
+
+// detectAPISchema 检测变更 .go 文件的接口/API 签名变更：
+// 对比 默认分支(旧) 与 当前工作区(新) 每个函数的签名，区分 added / modified / removed。
+func (s *ImpactService) detectAPISchema(cloneDir, baseRef string, files []string) []*APISchemaChange {
+	var changes []*APISchemaChange
+	for _, file := range files {
+		if !strings.HasSuffix(file, ".go") || strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		newContent, err := git.ReadFile(cloneDir, file)
+		if err != nil {
+			continue
+		}
+		oldContent, err := git.ReadFileAtCommit(cloneDir, baseRef, file)
+		if err != nil {
+			continue // 新增文件：无旧版本，函数均视为 added
+		}
+		newItems, err := astgo.ParseGoFile(newContent)
+		if err != nil {
+			continue
+		}
+		oldItems, err := astgo.ParseGoFile(oldContent)
+		if err != nil {
+			continue
+		}
+		oldSigs := make(map[string]string, len(oldItems))
+		for _, it := range oldItems {
+			oldSigs[it.FuncName] = it.Signature
+		}
+		newSet := make(map[string]bool, len(newItems))
+		module := moduleNameFromPath(file)
+		for _, it := range newItems {
+			newSet[it.FuncName] = true
+			oldSig, existed := oldSigs[it.FuncName]
+			if !existed {
+				changes = append(changes, &APISchemaChange{Module: module, Func: it.FuncName, File: file, ChangeType: "added", New: it.Signature})
+				continue
+			}
+			if strings.TrimSpace(oldSig) != strings.TrimSpace(it.Signature) {
+				changes = append(changes, &APISchemaChange{Module: module, Func: it.FuncName, File: file, ChangeType: "modified", Old: oldSig, New: it.Signature})
+			}
+		}
+		for name := range oldSigs {
+			if !newSet[name] {
+				changes = append(changes, &APISchemaChange{Module: module, Func: name, File: file, ChangeType: "removed"})
+			}
+		}
+	}
+	return changes
+}
+
+// SQL 语句正则（表名提取，兼容反引号/点分 schema.table）。
+var (
+	sqlCreateRe = regexp.MustCompile(`(?i)create\s+table\s+(?:if\s+not\s+exists\s+)?[\x60"]?([a-zA-Z0-9_\.]+)[\x60"]?`)
+	sqlAlterRe  = regexp.MustCompile(`(?i)alter\s+table\s+[\x60"]?([a-zA-Z0-9_\.]+)[\x60"]?`)
+	sqlDropRe   = regexp.MustCompile(`(?i)drop\s+table\s+(?:if\s+exists\s+)?[\x60"]?([a-zA-Z0-9_\.]+)[\x60"]?`)
+	sqlRenameRe = regexp.MustCompile(`(?i)rename\s+table\s+[\x60"]?([a-zA-Z0-9_\.]+)[\x60"]?\s+to\s+[\x60"]?([a-zA-Z0-9_\.]+)[\x60"]?`)
+)
+
+// detectDBSchema 检测 diff 中 SQL 文件的表结构变更（建表/改表/删表/重命名），
+// 并 best-effort 关联受影响业务模块（业务文档文本含表名的模块）。
+func (s *ImpactService) detectDBSchema(repoID int64, cloneDir string, files []string) []*DBSchemaChange {
+	var changes []*DBSchemaChange
+	for _, file := range files {
+		if !strings.HasSuffix(strings.ToLower(file), ".sql") {
 			continue
 		}
 		content, err := git.ReadFile(cloneDir, file)
 		if err != nil {
-			logger.Warn(context.Background(), "读取变更文件失败 %s: %v", file, err)
 			continue
 		}
-		items, err := astgo.ParseGoFile(content)
-		if err != nil {
-			logger.Warn(context.Background(), "解析变更文件失败 %s: %v", file, err)
-			continue
+		change := &DBSchemaChange{File: file}
+		switch {
+		case sqlRenameRe.MatchString(content):
+			change.ChangeType = "rename"
+			if m := sqlRenameRe.FindStringSubmatch(content); len(m) > 2 {
+				change.Tables = []string{m[1], m[2]}
+			}
+		case sqlCreateRe.MatchString(content):
+			change.ChangeType = "create"
+			change.Tables = uniqueStrings(sqlCreateRe.FindAllStringSubmatch(content, -1))
+		case sqlAlterRe.MatchString(content):
+			change.ChangeType = "alter"
+			change.Tables = uniqueStrings(sqlAlterRe.FindAllStringSubmatch(content, -1))
+		case sqlDropRe.MatchString(content):
+			change.ChangeType = "drop"
+			change.Tables = uniqueStrings(sqlDropRe.FindAllStringSubmatch(content, -1))
+		default:
+			continue // 非表结构语句，跳过
 		}
-		module := moduleNameFromPath(file)
-		for _, it := range items {
-			key := module + "." + it.FuncName
-			if _, dup := seen[key]; dup {
+		// best-effort：业务文档文本引用到表名的模块
+		modSet := make(map[string]struct{})
+		for _, table := range change.Tables {
+			for _, m := range s.modulesMentioningTable(repoID, table) {
+				modSet[m] = struct{}{}
+			}
+		}
+		for m := range modSet {
+			change.AffectedModules = append(change.AffectedModules, m)
+		}
+		changes = append(changes, change)
+	}
+	return changes
+}
+
+// modulesMentioningTable 查询业务文档（流程/摘要/风险文本）中提及指定表名的模块。
+func (s *ImpactService) modulesMentioningTable(repoID int64, table string) []string {
+	like := "%" + table + "%"
+	var modules []string
+	err := s.db.Model(&model.CodeFunctionDoc{}).
+		Where("repo_id = ? AND is_deleted = ? AND (process_flow LIKE ? OR summary LIKE ? OR risk_point LIKE ?)",
+			repoID, common.NotDeleted, like, like, like).
+		Distinct("module_name").Pluck("module_name", &modules).Error
+	if err != nil {
+		return nil
+	}
+	return modules
+}
+
+// uniqueStrings 提取正则子匹配并去重（保序）。
+func uniqueStrings(matches [][]string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, m := range matches {
+		for i := 1; i < len(m); i++ {
+			v := strings.TrimSpace(m[i])
+			if v == "" {
 				continue
 			}
-			seen[key] = struct{}{}
-			seeds = append(seeds, &FuncRef{Module: module, Func: it.FuncName, File: file, Kind: ImpactKindChanged})
+			if _, ok := seen[v]; ok {
+				continue
+			}
+			seen[v] = struct{}{}
+			out = append(out, v)
 		}
 	}
-	return seeds, nil
+	return out
+}
+
+// locateTestFiles 圈定建议回归的测试文件：扫描仓库内 *_test.go，
+// 凡正文引用受影响函数名（词边界）的测试文件进入建议清单。
+func (s *ImpactService) locateTestFiles(cloneDir string, result *ImpactAnalyzeResult) []*TestFileRef {
+	names := make(map[string]struct{})
+	for _, list := range [][]*FuncRef{result.Changed, result.Reverse, result.Forward} {
+		for _, f := range list {
+			if strings.TrimSpace(f.Func) != "" {
+				names[f.Func] = struct{}{}
+			}
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	// 构建词边界正则：\b(a|b|c)\b
+	var alts []string
+	for n := range names {
+		alts = append(alts, regexp.QuoteMeta(n))
+	}
+	re, err := regexp.Compile(`\b(` + strings.Join(alts, "|") + `)\b`)
+	if err != nil {
+		return nil
+	}
+
+	files, err := git.ListTrackedFiles(cloneDir, "*_test.go")
+	if err != nil {
+		logger.Warn(context.Background(), "列出测试文件失败: %v", err)
+		return nil
+	}
+	var refs []*TestFileRef
+	for _, file := range files {
+		content, err := git.ReadFile(cloneDir, file)
+		if err != nil {
+			continue
+		}
+		hits := re.FindAllString(content, -1)
+		if len(hits) == 0 {
+			continue
+		}
+		refs = append(refs, &TestFileRef{File: file, Funcs: uniqueStringsRaw(hits)})
+	}
+	return refs
+}
+
+// uniqueStringsRaw 去重（保序）并裁剪空格。
+func uniqueStringsRaw(in []string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
 }
 
 // propagate 构建调用图后做双向 BFS 传播。
@@ -390,7 +628,9 @@ func (s *ImpactService) propagate(repoID int64, seeds []*FuncRef, maxDepth int, 
 	if direction == ImpactDirectionBoth || direction == ImpactDirectionDownstream {
 		result.Forward = bfs(g, seedKeys, maxDepth, false)
 	}
-	s.enrichSummaries(repoID, result)
+	docMap := s.enrichSummaries(repoID, result)
+	// 受影响函数调用图（D3 可视化）
+	result.Graph = buildImpactGraph(result, edges, docMap)
 	return result, nil
 }
 
@@ -458,11 +698,12 @@ func bfs(g *callGraph, seeds []string, maxDepth int, reverse bool) []*FuncRef {
 	return result
 }
 
-// enrichSummaries 为结果中每个函数补齐 Wiki 文档摘要（提升可读性，供影响分析展示）。
-func (s *ImpactService) enrichSummaries(repoID int64, result *ImpactAnalyzeResult) {
+// enrichSummaries 为结果中每个函数补齐 Wiki 文档摘要（提升可读性，供影响分析展示），
+// 并返回 模块.函数 -> 文档 映射（调用图节点 doc_id 用）。
+func (s *ImpactService) enrichSummaries(repoID int64, result *ImpactAnalyzeResult) map[string]*model.CodeFunctionDoc {
 	docMap := s.docMapForResult(repoID, result)
 	if docMap == nil {
-		return
+		return nil
 	}
 	for _, list := range [][]*FuncRef{result.Changed, result.Reverse, result.Forward} {
 		for _, f := range list {
@@ -471,6 +712,7 @@ func (s *ImpactService) enrichSummaries(repoID int64, result *ImpactAnalyzeResul
 			}
 		}
 	}
+	return docMap
 }
 
 // docMapForResult 查询结果涉及模块的全部文档，构建 模块.函数 -> 文档 映射。

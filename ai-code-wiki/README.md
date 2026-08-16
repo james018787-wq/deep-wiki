@@ -160,6 +160,7 @@ docker compose down -v   # 连数据卷一起删除（慎用）
 | `MILVUS_PASSWORD` | vector.password | 空 | Milvus 密码（可选） |
 | `LLM_SERVICE_URL` | llm.base_url | http://ai-wiki-llm:9000 | Python LLM 微服务地址 |
 | `LLM_TIMEOUT` | llm.timeout | 60 | LLM 调用超时（秒），用于文档生成 / RAG 问答 / 需求分析 |
+| `LLM_MAX_CALLS_PER_TASK` | llm.max_calls_per_task | 0 | 单次解析任务 LLM 生成调用预算上限（0=不限；超出后跳过剩余函数，控制成本） |
 | `GIT_REPO_URL` | git.repo_url | 空 | 解析仓库地址（webhook / 触发任务解析用，生产必须配置） |
 | `GIT_DEFAULT_BRANCH` | git.default_branch | main | 默认分支（增量解析 diff 的基准分支） |
 | `GIT_CLONE_DIR` | git.clone_dir | ./repo_cache | 代码仓库本地克隆目录 |
@@ -215,6 +216,7 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | GET | `/api/v1/doc/list?module=xxx&page=1&page_size=20` | 分页查询函数文档列表（前端列表页使用） |
 | GET | `/api/v1/doc/:doc_id` | 获取文档详情 |
 | GET | `/api/v1/doc/:doc_id/source` | 读取文档对应源码文件内容（查看源码，基于仓库克隆目录工作区，缺失时自动拉取默认分支） |
+| GET | `/api/v1/doc/:doc_id/graph` | 文档对应函数的调用图（D3：上游调用方 + 下游被调用方 + 自身） |
 | PUT | `/api/v1/doc/:doc_id/edit` | 人工校正文档（记录修改前后快照） |
 | POST | `/api/v1/doc/:doc_id/reset` | 重置为原始 AI 版本 |
 | GET | `/api/v1/doc/modified/list?page=1&page_size=20` | 人工校正文档列表 |
@@ -225,7 +227,7 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | POST | `/api/v1/relation/add` | 人工新增依赖（写操作日志） |
 | DELETE | `/api/v1/relation` | 删除依赖（逻辑删除 + 操作日志） |
 | POST | `/api/v1/requirement/analyze` | 需求分析，body: `{user_requirement, force_model?, force_high_quality?}` |
-| POST | `/api/v1/impact/analyze` | 迭代影响分析，body: `{repo_id, branch|functions|query, direction?, max_depth?, version?, session_id?}` → 上游/下游影响点 + 设计文档初稿 + 逐函数变更记录（落库 `code_change_log`） |
+| POST | `/api/v1/impact/analyze` | 迭代影响分析，body: `{repo_id, branch|functions|query, direction?, max_depth?, version?, session_id?}` → 上游/下游影响点 + 设计文档初稿 + 逐函数变更记录（落库 `code_change_log`）；branch 模式额外返回 `api_schema`（接口签名变更检测）/ `db_schema_changes`（表结构变更）/ `test_files`（建议回归测试）+ `graph`（调用图） |
 | POST | `/api/v1/chat/ask` | 多轮问答（Redis 会话记忆），body: `{repo_id, query, session_id?, force_model?}` → `{session_id, answer, reference_list, used_model, cost}`（引用项含 `doc_id` + `func_line`，前端可跳转源码定位） |
 | GET | `/api/v1/chat/sessions?repo_id=1` | 会话列表（按更新时间倒序，含消息数） |
 | GET | `/api/v1/chat/history?session_id=xxx` | 会话历史消息（时间正序） |
@@ -248,7 +250,7 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | `/docs` | 文档列表 | 分页 + 模块筛选，点击进入编辑 |
 | `/chat` | 智能问答 | 多轮对话 + 会话列表/新建；可切换「需求分析」模式，粘贴产品修订/需求文档直接得到开发设计建议 |
 | `/impact` | 迭代影响分析 | 分支/自然语言/函数 → 上游/下游影响点三栏 + 开发设计文档初稿 + 逐函数个性化变更记录 |
-| `/doc-edit/:id` | 文档编辑/详情 | 加载现有文档，`PUT /api/v1/doc/:doc_id/edit` 提交、支持重置，可进入历史版本页 |
+| `/doc-edit/:id` | 文档编辑/详情 | 加载现有文档，`PUT /api/v1/doc/:doc_id/edit` 提交、支持重置，可进入历史版本页；含函数调用图（D3） |
 | `/doc-source/:id` | 源码查看 | 新窗口展示文档对应源码文件（行号），支持从列表/编辑页「查看源码」进入 |
 | `/doc-history/:id` | 文档历史版本 | 历史列表 + 快照详情，查看修改前后原始 JSON |
 | `/tasks` | 任务管理 | 任务列表 / 状态查询 / 触发解析任务 |
@@ -362,6 +364,15 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
 11. **混合检索与引用定位**
    - `doc/search` 与 `chat/ask` 采用向量语义召回 ∪ 关键词精确召回（MySQL LIKE 覆盖模块/函数名/文件路径/摘要/入参/出参/流程/风险字段）取并集去重，提升召回率；
    - 回答的 `reference_list` 带 `doc_id` + `func_line`，前端引用可点击跳转 `/doc-source/:doc_id#L{行号}`，源码页自动滚动并高亮该行。
+12. **函数调用图可视化**
+   - 文档详情页（`GET /api/v1/doc/:doc_id/graph`）与影响分析结果内置 D3 力导向调用图：自身/上游调用方/下游被调用方 着色区分，节点可点击跳转源码，支持拖拽与缩放。
+13. **成本控制（LLM 调用预算）**
+   - 增量解析时逐函数比对源码：AI 自动文档且源码未变更 → 缓存命中，直接跳过 LLM 生成（任务日志输出命中率）；
+   - `LLM_MAX_CALLS_PER_TASK` 设置单任务 LLM 生成调用预算上限，超限跳过剩余函数，防止批量重建超支。
+14. **影响分析增强（branch 模式）**
+   - 接口/API 签名变更检测：对比默认分支与目标分支每个 Go 函数签名，输出 added / modified（含旧新签名）/ removed；
+   - 数据库表结构变更：识别 diff 中 SQL 文件的 建表/改表/删表/重命名，并 best-effort 关联受影响业务模块；
+   - 回归测试圈定：扫描仓库 `*_test.go`，正文引用受影响函数的测试文件进入建议清单。
 
 ## 7. 表结构简要说明
 

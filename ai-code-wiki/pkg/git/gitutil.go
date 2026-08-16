@@ -109,6 +109,63 @@ func FileExists(repoPath, relPath string) bool {
 	return err == nil && !info.IsDir()
 }
 
+// ReadFileAtCommit 读取仓库内相对路径文件在指定 commit 的内容（如 origin/main），
+// 用于对比变更前后函数签名（API 变更检测）。
+func ReadFileAtCommit(repoPath, commit, relPath string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), diffTimeout)
+	defer cancel()
+
+	ref := strings.TrimSpace(commit)
+	if ref == "" {
+		return "", fmt.Errorf("commit 不能为空")
+	}
+	if err := validateRelPath(repoPath, relPath); err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, "git", "show", ref+":"+relPath)
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git show %s:%s 失败: %v", ref, relPath, err)
+	}
+	return string(out), nil
+}
+
+// ListTrackedFiles 列出仓库内被 git 跟踪的文件（排除 .git 内部），支持 glob 匹配相对路径。
+// 用于测试用例圈定：扫描 *_test.go 是否引用受影响函数。
+func ListTrackedFiles(repoPath string, patterns ...string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), diffTimeout)
+	defer cancel()
+
+	args := append([]string{"ls-files", "-z"}, patterns...)
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files 失败: %v", err)
+	}
+	var files []string
+	for _, name := range strings.Split(string(out), "\x00") {
+		if name = strings.TrimSpace(name); name != "" {
+			files = append(files, name)
+		}
+	}
+	return files, nil
+}
+
+// validateRelPath 校验相对路径合法且不越出仓库根目录。
+func validateRelPath(repoPath, relPath string) error {
+	root, err := filepath.Abs(repoPath)
+	if err != nil {
+		return fmt.Errorf("解析仓库根目录失败: %w", err)
+	}
+	full := filepath.Join(root, relPath)
+	if rel, err := filepath.Rel(root, full); err != nil || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("非法文件路径: %s", relPath)
+	}
+	return nil
+}
+
 // ReadFile 读取仓库内相对路径文件内容。
 // 通过路径校验防止越出仓库根目录。
 func ReadFile(repoPath, relPath string) (string, error) {

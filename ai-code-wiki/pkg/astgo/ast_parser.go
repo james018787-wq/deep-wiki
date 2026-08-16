@@ -13,6 +13,7 @@ type FuncItem struct {
 	FuncName     string            // 函数名称
 	StartLine    int               // 函数声明起始行号（1 基，用于答案引用定位）
 	Code         string            // 函数源码片段（完整函数体）
+	Signature    string            // 函数签名（接收者+函数名+入参+出参，API 变更检测用）
 	Callee       []string          // 调用函数列表（SelectorExpr 形式，如 http.Get、user.GetUser）
 	CalleeSimple []string          // 简单标识符调用列表（同包函数调用，如 ValidateOrder）
 	PackageName  string            // 函数所在包名（package xxx）
@@ -46,6 +47,7 @@ func ParseGoFile(fileContent string) ([]FuncItem, error) {
 			FuncName:     fn.Name.Name,
 			StartLine:    fset.Position(fn.Pos()).Line,
 			Code:         extractSource(fset, fileContent, fn),
+			Signature:    extractSignature(fset, fileContent, fn),
 			Callee:       selector,
 			CalleeSimple: simple,
 			PackageName:  file.Name.Name,
@@ -123,6 +125,17 @@ func extractSource(fset *token.FileSet, fileContent string, fn *ast.FuncDecl) st
 		return fileContent[start:end]
 	}
 	return ""
+}
+
+// extractSignature 截取函数签名（声明起点到函数体左花括号之间）：
+// func [receiver] Name(params) [results]，用于 API 变更检测（签名变化 = 破坏性变更）。
+func extractSignature(fset *token.FileSet, fileContent string, fn *ast.FuncDecl) string {
+	start := fset.Position(fn.Pos()).Offset
+	end := fset.Position(fn.Body.Lbrace).Offset
+	if start < 0 || end <= start || end > len(fileContent) {
+		return ""
+	}
+	return strings.TrimSpace(fileContent[start:end])
 }
 
 // exprString 还原表达式源码字符串，支持多级 SelectorExpr 与泛型索引。

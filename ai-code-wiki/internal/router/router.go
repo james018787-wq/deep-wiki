@@ -91,6 +91,8 @@ func Register(r *gin.Engine, h *handler.Handler) {
 		api.GET("/doc/:doc_id", h.Doc.GetDoc)
 		// 读取文档对应源码文件内容（查看源码）
 		api.GET("/doc/:doc_id/source", h.Doc.GetDocSource)
+		// 查询文档对应函数的调用图（D3 可视化）
+		api.GET("/doc/:doc_id/graph", h.Doc.GetDocGraph)
 		// 人工校正业务文档
 		api.PUT("/doc/:doc_id/edit", h.Doc.EditDoc)
 		// 文档重置为原始 AI 版本

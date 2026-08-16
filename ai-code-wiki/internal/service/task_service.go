@@ -41,9 +41,18 @@ type TaskService struct {
 	gitCfg       *config.GitConfig        // git 克隆目录根配置（每个仓库独立子目录）
 	llmBaseURL   string                   // Python LLM 服务地址（LLM_SERVICE_URL）
 	llmTimeout   time.Duration            // LLM 生成文档调用超时（LLM_TIMEOUT，默认 60s）
+	maxCalls     int                      // 单次解析任务 LLM 生成调用预算上限（0=不限）
 	vc           vector.VectorClient      // 向量存储抽象（业务不感知 chroma/milvus）
 	queue        taskqueue.TaskQueue      // 异步任务队列（提交入口，消费由独立 Worker 完成）
 	fileFilter   *filefilter.FileFilter   // 文件过滤规则（跳过测试/依赖/非业务代码）
+}
+
+// pipelineStats 单次解析任务的成本统计（缓存命中 / LLM 调用 / 预算跳过）。
+type pipelineStats struct {
+	total    int // 处理函数总数
+	cacheHit int // 源码未变更、跳过 LLM 生成的函数数
+	llmCalls int // 实际 LLM 生成调用次数
+	skipped  int // 超预算跳过的函数数
 }
 
 // NewTaskService 构建任务服务。
@@ -60,6 +69,7 @@ func NewTaskService(db *gorm.DB, cfg *config.Config, vc vector.VectorClient, que
 		gitCfg:       &cfg.Git,
 		llmBaseURL:   cfg.LLM.BaseURL,
 		llmTimeout:   llmCallTimeout(cfg.LLM.Timeout, defaultLLMTimeoutSec),
+		maxCalls:     cfg.LLM.MaxCallsPerTask,
 		vc:           vc,
 		queue:        queue,
 		fileFilter: filefilter.New(filefilter.Config{
@@ -144,14 +154,21 @@ func (s *TaskService) runPipeline(record *model.TaskRecord) error {
 		logger.Warn(ctx, "任务 %s 标记执行中失败: %v", record.TaskID, err)
 	}
 
-	if err := s.process(ctx, record); err != nil {
+	stats := &pipelineStats{}
+	if err := s.process(ctx, record, stats); err != nil {
 		logger.Error(ctx, "任务 %s 执行失败: %v", record.TaskID, err)
 		return err
 	}
 	if err := s.MarkSuccess(record.TaskID); err != nil {
 		logger.Warn(ctx, "任务 %s 标记成功失败: %v", record.TaskID, err)
 	}
-	logger.Info(ctx, "任务 %s 执行成功", record.TaskID)
+	// 成本统计：缓存命中率 = 跳过 LLM 生成的函数占比
+	hitRate := 0.0
+	if stats.total > 0 {
+		hitRate = float64(stats.cacheHit) / float64(stats.total) * 100
+	}
+	logger.Info(ctx, "任务 %s 执行成功，成本统计: 函数总数=%d 缓存命中=%d(命中率=%.1f%%) LLM生成调用=%d 超预算跳过=%d",
+		record.TaskID, stats.total, stats.cacheHit, hitRate, stats.llmCalls, stats.skipped)
 	return nil
 }
 
@@ -237,7 +254,7 @@ func genWebhookTaskID(event *webhook.PushEvent) string {
 
 // process 核心流水线：git拉取 -> diff -> 过滤业务代码文件 -> AST解析 -> LLM生成文档。
 // 文件过滤命中测试文件/依赖目录/非业务后缀等规则时直接跳过，不解析、不生成文档。
-func (s *TaskService) process(ctx context.Context, task *model.TaskRecord) error {
+func (s *TaskService) process(ctx context.Context, task *model.TaskRecord, stats *pipelineStats) error {
 	// 0. 解析任务所属仓库（克隆目录按仓库名隔离：{cloneRoot}/{repo_name}）
 	repoInfo, err := s.repoRepo.GetByID(task.RepoID)
 	if err != nil {
@@ -281,7 +298,7 @@ func (s *TaskService) process(ctx context.Context, task *model.TaskRecord) error
 	// 4-5. 解析 + LLM生成文档（单文件失败不终止整体任务）
 	ok := 0
 	for _, file := range codeFiles {
-		if err := s.processFile(cloneDir, repoInfo, file); err != nil {
+		if err := s.processFile(cloneDir, repoInfo, file, stats); err != nil {
 			logger.Warn(ctx, "任务 %s 处理文件失败 %s: %v", task.TaskID, file, err)
 			continue
 		}
@@ -311,7 +328,7 @@ type fileFunc struct {
 
 // processFile 解析单个代码文件，逐个函数生成文档。
 // 按文件后缀选择解析器：.go 走 go ast 解析，.php 走简易正则解析。
-func (s *TaskService) processFile(cloneDir string, repoInfo *model.CodeRepo, file string) error {
+func (s *TaskService) processFile(cloneDir string, repoInfo *model.CodeRepo, file string, stats *pipelineStats) error {
 	// 文件整体已删除：清空该文件全部文档（幽灵文档清理）
 	if !git.FileExists(cloneDir, file) {
 		if err := s.cleanupFileDocs(repoInfo, file); err != nil {
@@ -373,7 +390,13 @@ func (s *TaskService) processFile(cloneDir string, repoInfo *model.CodeRepo, fil
 	// 逐个函数生成文档（单函数失败仅记录日志，继续处理）
 	ok := 0
 	for _, fn := range funcs {
-		if err := s.processFunc(repoInfo, file, fn); err != nil {
+		// 预算控制：超过单任务 LLM 调用上限后跳过剩余函数
+		if s.maxCalls > 0 && stats.llmCalls >= s.maxCalls {
+			stats.skipped++
+			logger.Warn(context.Background(), "已达到单任务 LLM 预算上限(%d)，跳过函数 %s.%s", s.maxCalls, file, fn.Name)
+			continue
+		}
+		if err := s.processFunc(repoInfo, file, fn, stats); err != nil {
 			logger.Warn(context.Background(), "处理函数失败 %s.%s: %v", file, fn.Name, err)
 			continue
 		}
@@ -573,16 +596,19 @@ func (s *TaskService) syncModuleRelationsFromEdges(repoID int64, edges []*model.
 // processFunc 单个函数：调用 LLM 生成文档，并按业务规则落库。
 //
 // 业务规则（严格遵守）：
+//  0. 成本控制：函数已存在、源码未变更且无待复核标记（AI 自动文档）时，
+//     直接缓存命中跳过 LLM 生成（文档仍有效）；超过单任务预算时跳过。
 //  1. 函数已存在且 content_source=2（人工校正）：不覆盖当前生效文档，
 //     仅更新 source_code 并置 source_code_changed=1 待复核。
 //  2. origin_auto_doc 只在【首次创建】时写入，任何情况（源码变更、重新解析）禁止覆盖，
 //     保证"重置回 AI 原始版本"始终可追溯到首次生成内容。
 //  3. 无人工校正标记的函数：覆盖写入文档并同步向量库。
-func (s *TaskService) processFunc(repoInfo *model.CodeRepo, file string, fn fileFunc) error {
+func (s *TaskService) processFunc(repoInfo *model.CodeRepo, file string, fn fileFunc, stats *pipelineStats) error {
 	funcName, code := fn.Name, fn.Code
 	if strings.TrimSpace(funcName) == "" {
 		return fmt.Errorf("函数名为空，跳过")
 	}
+	stats.total++
 
 	// 推导模块名（取文件路径首段目录）
 	moduleName := moduleNameFromPath(file)
@@ -592,19 +618,29 @@ func (s *TaskService) processFunc(repoInfo *model.CodeRepo, file string, fn file
 		logger.Warn(context.Background(), "登记业务模块失败 module=%s: %v", moduleName, err)
 	}
 
-	// 调用 Python LLM 服务生成标准化业务文档
-	data, rawJSON, err := s.generateDoc(moduleName, file, code)
-	if err != nil {
-		return err
-	}
-
-	// 查询函数是否已有文档（按仓库隔离）
+	// 查询函数是否已有文档（按仓库隔离），供缓存命中与规则1判断
 	existing, exists := (*model.CodeFunctionDoc)(nil), false
 	if doc, err := s.docRepo.GetByFileFunc(repoInfo.ID, file, funcName); err == nil {
 		existing, exists = doc, true
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return fmt.Errorf("查询已有文档失败: %w", err)
 	}
+
+	// 规则0：成本控制 - 源码未变更的 AI 自动文档直接缓存命中，跳过 LLM 生成
+	if exists && existing.ContentSource == common.ContentSourceAuto &&
+		existing.SourceCodeChanged == common.SourceCodeUnchanged &&
+		strings.TrimSpace(existing.SourceCode) == strings.TrimSpace(code) {
+		stats.cacheHit++
+		logger.Info(context.Background(), "函数 %s.%s 源码未变更，缓存命中跳过 LLM 生成", file, funcName)
+		return nil
+	}
+
+	// 调用 Python LLM 服务生成标准化业务文档
+	data, rawJSON, err := s.generateDoc(moduleName, file, code)
+	if err != nil {
+		return err
+	}
+	stats.llmCalls++
 
 	// 规则1：人工校正文档不覆盖，仅更新源码与待复核标记，禁止触碰 origin_auto_doc 与生效文档
 	if exists && existing.ContentSource == common.ContentSourceManual {

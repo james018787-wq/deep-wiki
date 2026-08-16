@@ -52,6 +52,11 @@
         <pre>{{ doc.origin_auto_doc }}</pre>
       </details>
     </div>
+
+    <div class="panel" v-if="graph">
+      <h4 style="margin-top:0;">函数调用图 <span class="hint">上游调用方 / 下游被调用 / 自身</span></h4>
+      <CallGraph :graph="graph" :height="360" />
+    </div>
   </div>
 </template>
 
@@ -59,11 +64,13 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiRequest } from '../api'
+import CallGraph from '../components/CallGraph.vue'
 
 const route = useRoute()
 const router = useRouter()
 const docId = ref(0)
 const doc = ref({})
+const graph = ref(null)
 const form = reactive({ summary: '', input_desc: '', output_desc: '', process_flow: '', risk_point: '', remark: '' })
 const saving = ref(false)
 const error = ref('')
@@ -91,9 +98,16 @@ async function load() {
     form.output_desc = doc.value.output_desc || ''
     form.process_flow = doc.value.process_flow || ''
     form.risk_point = doc.value.risk_point || ''
+    loadGraph()
   } catch (e) {
     error.value = '加载文档失败: ' + e.message
   }
+}
+
+async function loadGraph() {
+  try {
+    graph.value = await apiRequest(docPath() + '/graph')
+  } catch (e) { /* 图加载失败不阻塞编辑 */ }
 }
 
 async function save() {

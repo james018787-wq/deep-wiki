@@ -71,6 +71,58 @@
       </div>
     </div>
 
+    <div class="panel" v-if="result && result.graph && result.graph.nodes && result.graph.nodes.length">
+      <h4>调用关系图 <span class="tag">D3 可视化</span></h4>
+      <CallGraph :graph="result.graph" :height="460" />
+    </div>
+
+    <div class="panel" v-if="result && result.api_schema && result.api_schema.length">
+      <h4>接口 / API 变更 <span class="tag">破坏性变更检测</span></h4>
+      <table>
+        <thead>
+          <tr><th>函数</th><th>类型</th><th>签名变化</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="(a, i) in result.api_schema" :key="'api'+i">
+            <td><b>{{ a.module }}.{{ a.func }}</b><div class="edge">{{ a.file }}</div></td>
+            <td>
+              <span class="status" :class="a.change_type === 'removed' ? 'err' : (a.change_type === 'modified' ? 'warn' : 'ok')">
+                {{ {added:'新增', modified:'签名变更', removed:'删除'}[a.change_type] || a.change_type }}
+              </span>
+            </td>
+            <td>
+              <div v-if="a.change_type === 'modified'"><div class="old-sig">{{ a.old }}</div><div class="new-sig">→ {{ a.new }}</div></div>
+              <div v-else-if="a.new">{{ a.new }}</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel" v-if="result && result.db_schema_changes && result.db_schema_changes.length">
+      <h4>数据库表结构变更 <span class="tag">Schema 影响</span></h4>
+      <div v-for="(d, i) in result.db_schema_changes" :key="'db'+i" class="dbchg">
+        <div class="name chg">
+          <span class="status" :class="{ok:d.change_type==='create', err:d.change_type==='drop'}">
+            {{ {create:'建表', alter:'改表', drop:'删表', rename:'重命名'}[d.change_type] || d.change_type }}
+          </span>
+          {{ d.tables.join('、') }}
+          <span class="edge">{{ d.file }}</span>
+        </div>
+        <div class="sum" v-if="d.affected_modules && d.affected_modules.length">
+          影响模块：{{ d.affected_modules.join('、') }}
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" v-if="result && result.test_files && result.test_files.length">
+      <h4>建议回归测试 <span class="tag">引用受影响函数</span></h4>
+      <div v-for="(t, i) in result.test_files" :key="'tf'+i" class="dbchg">
+        <div class="name chg">{{ t.file }}</div>
+        <div class="sum">命中函数：{{ t.funcs.join('、') }}</div>
+      </div>
+    </div>
+
     <div class="panel design" v-if="result && result.design_doc">
       <h4>开发设计文档初稿</h4>
       <div class="sec">
@@ -105,6 +157,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { apiRequest } from '../api'
 import { fetchRepos, enabledRepos, defaultRepoId } from '../store/repo'
+import CallGraph from '../components/CallGraph.vue'
 
 const SESSION_KEY = 'ai-code-wiki-impact-session'
 function genSessionId() {

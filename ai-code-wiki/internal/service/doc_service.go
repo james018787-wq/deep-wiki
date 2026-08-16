@@ -28,6 +28,7 @@ type DocService struct {
 	changeLog  *repo.CodeChangeLogRepo
 	moduleRepo *repo.BusinessModuleRepo
 	repoRepo   *repo.CodeRepoRepo  // 代码仓库注册表（解析仓库名用于向量元数据）
+	callEdge   *repo.CallEdgeRepo  // 函数级调用边（文档调用图）
 	vc         vector.VectorClient // 向量存储抽象（业务不感知 chroma/milvus）
 	queue      taskqueue.TaskQueue // 异步任务队列（提交入口，消费由独立 Worker 完成）
 	gitCfg     *config.GitConfig   // git 克隆目录根配置（每个仓库独立子目录）
@@ -43,6 +44,7 @@ func NewDocService(db *gorm.DB, vc vector.VectorClient, queue taskqueue.TaskQueu
 		changeLog:  repo.NewCodeChangeLogRepo(db),
 		moduleRepo: repo.NewBusinessModuleRepo(db),
 		repoRepo:   repo.NewCodeRepoRepo(db),
+		callEdge:   repo.NewCallEdgeRepo(db),
 		vc:         vc,
 		queue:      queue,
 		gitCfg:     gitCfg,

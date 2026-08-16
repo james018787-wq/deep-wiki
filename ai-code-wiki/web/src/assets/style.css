@@ -208,6 +208,13 @@ tr.doc-row:hover td { background: rgba(34, 211, 238, 0.08); }
 .status.ai { background: rgba(34, 211, 238, 0.12); color: var(--cyan); border-color: rgba(34,211,238,.3); }
 .status.ok { background: rgba(52, 211, 153, 0.12); color: var(--green); border-color: rgba(52,211,153,.3); }
 .status.err { background: rgba(248, 113, 113, 0.12); color: var(--red); border-color: rgba(248,113,113,.3); }
+.status.warn { background: rgba(251, 191, 36, 0.12); color: var(--amber); border-color: rgba(251,191,36,.3); }
+
+/* 影响分析增强：API 签名变更 / 表结构变更 / 回归测试 */
+.old-sig { color: var(--red); font-family: var(--mono); font-size: 12px; word-break: break-all; }
+.new-sig { color: var(--green); font-family: var(--mono); font-size: 12px; word-break: break-all; margin-top: 2px; }
+.dbchg { padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.dbchg:last-child { border-bottom: none; }
 
 /* ============ 消息提示 ============ */
 .msg { margin-top: 12px; padding: 9px 14px; border-radius: 8px; font-size: 13px; }
