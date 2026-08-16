@@ -59,7 +59,7 @@
 | 4 | Go `pkg/vector.EmbedText` → ai-wiki-llm `/api/embedding/text` | Python `OpenAIEmbeddings` | query/文档转向量 | embedding 专用模型 | ❌ 否（**必须固定，禁止调度**，见 4.3） |
 | 5 | Go `ChromaClient.UpsertDoc` → ai-wiki-llm `/api/vector/upsert_doc` | Python embed + 写 Chroma | 文档向量写入 | 同上 | ❌ 否 |
 | 6 | Go `MilvusClient` → Milvus + `/api/embedding/text` | Go 直连向量库 + Python embed | 向量写入/检索 | 同上 | ❌ 否 |
-| 7 | Go `impact` / `chat` → ai-wiki-llm `/api/chat` | Python 调度器 → 各家 API | 设计文档合成 / 多轮问答 / 滚动摘要 | `model_pool.yaml` 模型池 | ✅ **是** |
+| 7 | Go `impact` / `chat` → ai-wiki-llm `/api/chat` | Python 调度器 → 各家 API | 变更说明合成 / 多轮问答 / 滚动摘要 | `model_pool.yaml` 模型池 | ✅ **是** |
 
 > 注意：Chroma 的**检索**（`SearchQuery`）是 Go 直连 Chroma HTTP，只有「向量化」这个动作经过 ai-wiki-llm；Milvus 模式下 Go 全程直连向量库（向量化仍走 Python）。**任何模型 API 调用均经过 ai-wiki-llm，Go 侧无直连模型代码。**
 
@@ -107,13 +107,13 @@ PUT /api/v1/doc/:doc_id/edit（事务 + 快照日志）
 
 ### 4.5 迭代影响分析（POST /api/v1/impact/analyze）
 
-分析「本次迭代改了什么 → 会影响哪些函数」，输出影响点 + 设计文档初稿，并逐函数落库 `code_change_log`。
+分析「本次迭代改了什么 → 会影响哪些函数」，输出影响点 + 变更说明与影响分析，并逐函数落库 `code_change_log`。
 
 ```
 分支（git diff）或自然语言（RAG 定位）或显式函数 → 变更种子函数集
   1. 函数级调用图：function_call_edge 表（task_service 流水线增量重建，跨包边自动聚合 module_relation）
   2. 双向 BFS 传播：反向找调用者（上游/谁受影响），正向找被调用者（下游/牵连谁），受 max_depth 限制
-  3. LLM 合成设计文档初稿（synthesizeDesignDoc）+ 逐函数个性化变更记录（synthesizeFuncChanges，失败本地兜底）
+  3. LLM 合成变更说明与影响分析（synthesizeDesignDoc）+ 逐函数个性化变更记录（synthesizeFuncChanges，失败本地兜底）
   4. 落库 code_change_log（每文档一条，含 version），支持 session 多轮追问累计变更函数
 ```
 

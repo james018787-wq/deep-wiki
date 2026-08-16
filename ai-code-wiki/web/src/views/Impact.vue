@@ -116,7 +116,7 @@
     </div>
 
     <div class="panel design" v-if="result && result.design_doc">
-      <h4>开发设计文档初稿</h4>
+      <h4>变更说明与影响分析</h4>
       <div class="sec">
         <b>变更摘要</b>
         <p>{{ result.design_doc.change_summary }}</p>
@@ -141,7 +141,7 @@
       <div class="meta" v-if="result.used_model">模型：{{ result.used_model }} ｜ 本次估算成本：￥{{ result.cost != null ? result.cost.toFixed(5) : '-' }}</div>
     </div>
 
-    <div class="msg info" v-if="analyzing">分析中（git diff 推导变更 → 调用图传播 → LLM 合成设计文档）...</div>
+    <div class="msg info" v-if="analyzing">分析中（git diff 推导变更 → 调用图传播 → LLM 合成变更说明）...</div>
   </div>
 </template>
 

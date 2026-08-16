@@ -38,7 +38,7 @@ AI 代码知识库系统。通过 CI 触发的代码解析任务，自动提取�
 | RAG 检索 | 自然语言跨模块检索 | Chroma 向量召回 + 模块依赖扩充 |
 | 需求分析 | 需求 → 结构化分析 | 复用检索流水线，LLM 输出 JSON |
 | 多轮智能对话 | 基于 Redis 会话记忆的问答 | 滑动窗口 + 滚动摘要，支持连续追问；前端可切换「需求分析」模式 |
-| 迭代影响分析 | 变更 → 上游/下游影响点 + 设计文档初稿 | 函数级调用边（`function_call_edge`）双向 BFS 传播，LLM 合成设计文档并逐函数落库 `code_change_log` |
+| 迭代影响分析 | 变更 → 上游/下游影响点 + 变更说明与影响分析 | 函数级调用边（`function_call_edge`）双向 BFS 传播，LLM 合成变更说明并逐函数落库 `code_change_log` |
 | 登录鉴权 | 用户登录 / 令牌鉴权 | `user`/`user_token` 表 + bcrypt；Bearer Token（用户）+ X-Api-Secret（server-to-server）双通道 |
 | 科技感前端 | 深空科技主题 + 登录访问 | Vue3 + Vite 构建 SPA（history 路由，刷新不 404），所有页面路由守卫强制登录 |
 | 多模型调度 | 优先低价 + 故障降级熔断 | 收口于 ai-wiki-llm（Python），Redis 分布式熔断/限流 |
@@ -227,7 +227,7 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | POST | `/api/v1/relation/add` | 人工新增依赖（写操作日志） |
 | DELETE | `/api/v1/relation` | 删除依赖（逻辑删除 + 操作日志） |
 | POST | `/api/v1/requirement/analyze` | 需求分析，body: `{user_requirement, force_model?, force_high_quality?}` |
-| POST | `/api/v1/impact/analyze` | 迭代影响分析，body: `{repo_id, branch|functions|query, direction?, max_depth?, version?, session_id?}` → 上游/下游影响点 + 设计文档初稿 + 逐函数变更记录（落库 `code_change_log`）；branch 模式额外返回 `api_schema`（接口签名变更检测）/ `db_schema_changes`（表结构变更）/ `test_files`（建议回归测试）+ `graph`（调用图） |
+| POST | `/api/v1/impact/analyze` | 迭代影响分析，body: `{repo_id, branch|functions|query, direction?, max_depth?, version?, session_id?}` → 上游/下游影响点 + 变更说明与影响分析 + 逐函数变更记录（落库 `code_change_log`）；branch 模式额外返回 `api_schema`（接口签名变更检测）/ `db_schema_changes`（表结构变更）/ `test_files`（建议回归测试）+ `graph`（调用图） |
 | POST | `/api/v1/chat/ask` | 多轮问答（Redis 会话记忆），body: `{repo_id, query, session_id?, force_model?}` → `{session_id, answer, reference_list, used_model, cost}`（引用项含 `doc_id` + `func_line`，前端可跳转源码定位） |
 | GET | `/api/v1/chat/sessions?repo_id=1` | 会话列表（按更新时间倒序，含消息数） |
 | GET | `/api/v1/chat/history?session_id=xxx` | 会话历史消息（时间正序） |
@@ -254,7 +254,7 @@ ai-wiki-llm 侧环境变量（Python 模型门面）：
 | `/login` | 登录页 | 默认管理员 `admin` / `admin123`，可用 `AUTH_ADMIN_PASSWORD` 覆盖默认密码 |
 | `/docs` | 文档列表 | 分页 + 模块筛选，点击进入编辑 |
 | `/chat` | 智能问答 | 多轮对话 + 会话列表/新建；可切换「需求分析」模式，粘贴产品修订/需求文档直接得到开发设计建议 |
-| `/impact` | 迭代影响分析 | 分支/自然语言/函数 → 上游/下游影响点三栏 + 开发设计文档初稿 + 逐函数个性化变更记录 |
+| `/impact` | 迭代影响分析 | 分支（自动 diff）→ 上游/下游影响点三栏 + 变更说明与影响分析 + 逐函数个性化变更记录 |
 | `/doc-edit/:id` | 文档编辑/详情 | 加载现有文档，`PUT /api/v1/doc/:doc_id/edit` 提交、支持重置，可进入历史版本页；含函数调用图（D3） |
 | `/doc-source/:id` | 源码查看 | 新窗口展示文档对应源码文件（行号），支持从列表/编辑页「查看源码」进入 |
 | `/doc-history/:id` | 文档历史版本 | 历史列表 + 快照详情，查看修改前后原始 JSON |
@@ -294,7 +294,7 @@ curl -X POST http://localhost:8080/api/v1/chat/ask \
   -H 'Content-Type: application/json' \
   -d '{"repo_id":1,"query":"下单模块的详细逻辑是什么？"}'
 
-# 迭代影响分析（自然语言描述本次迭代变更 → 影响点 + 设计文档初稿）
+# 迭代影响分析（分支自动 diff → 影响点 + 变更说明与影响分析）
 curl -X POST http://localhost:8080/api/v1/impact/analyze \
   -H 'Content-Type: application/json' \
   -d '{"repo_id":1,"functions":[{"module":"order","func":"CreateOrder"}],"version":"v1.4.0"}'
@@ -320,7 +320,7 @@ curl -X POST http://localhost:8080/api/v1/doc/search \
 3. 文档检索与人工校正：RAG 检索、编辑/重置（快照日志）、向量同步
 4. 模块依赖图谱：AST 识别 + 人工关系 + 操作日志
 5. 需求分析：复用检索流水线，结构化 LLM 输出
-6. 迭代影响分析：函数级调用边（`function_call_edge`）+ 双向 BFS 传播 + 设计文档合成落库
+6. 迭代影响分析：函数级调用边（`function_call_edge`）+ 双向 BFS 传播 + 变更说明合成落库
 7. 多轮智能对话：Redis 会话记忆（滑动窗口 + 滚动摘要）
 
 ### 5.2 MVP 已知限制

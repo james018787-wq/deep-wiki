@@ -67,7 +67,7 @@ type ImpactAnalyzeResult struct {
 	Changed        []*FuncRef          `json:"changed"`           // 直接修改
 	Reverse        []*FuncRef          `json:"reverse_impact"`    // 上游调用方（按深度升序）
 	Forward        []*FuncRef          `json:"forward_impact"`    // 下游被调用方（按深度升序）
-	DesignDoc      *ImpactDesignDoc    `json:"design_doc"`        // 迭代开发设计文档初稿（LLM 合成）
+	DesignDoc      *ImpactDesignDoc    `json:"design_doc"`        // 迭代变更说明与影响分析（LLM 合成）
 	FuncChanges    []*ImpactFuncChange `json:"func_changes"`      // 每个被修改函数的个性化变更记录（LLM 合成）
 	APISchema      []*APISchemaChange  `json:"api_schema"`        // 接口/API 签名变更（破坏性变更检测，branch 模式）
 	DBSchemaChange []*DBSchemaChange   `json:"db_schema_changes"` // 数据库表结构变更（branch 模式）
@@ -77,7 +77,7 @@ type ImpactAnalyzeResult struct {
 	Cost           float64             `json:"cost"`              // 本次 LLM 合成调用估算成本（元）
 }
 
-// ImpactDesignDoc 迭代影响分析产出的开发设计文档初稿。
+// ImpactDesignDoc 迭代影响分析产出的变更说明与影响分析。
 type ImpactDesignDoc struct {
 	ChangeSummary  string `json:"change_summary"`  // 本次迭代变更摘要
 	BusinessImpact string `json:"business_impact"` // 业务影响范围（含受影响模块与函数）
@@ -95,7 +95,7 @@ type ImpactFuncChange struct {
 
 // ImpactService 迭代影响分析：基于函数级调用边做反向/正向 BFS 传播。
 // 输入本次迭代的变更函数（分支 diff / 显式指定 / 自然语言 RAG 定位），
-// 输出受影响的上游调用链与下游依赖，并由 LLM 合成开发设计文档初稿，沉淀到 code_change_log。
+// 输出受影响的上游调用链与下游依赖，并由 LLM 合成变更说明与影响分析，沉淀到 code_change_log。
 // 支持多轮追问（SessionID 累积变更种子集合后重新传播）。
 type ImpactService struct {
 	db           *gorm.DB
@@ -140,7 +140,7 @@ func NewImpactService(db *gorm.DB, cfg *config.Config, search *SearchService) *I
 // Analyze 执行影响分析：
 //  1. 解析变更函数种子：branch diff / 显式 functions / 自然语言 RAG 定位（多轮追问合并会话上下文）；
 //  2. 构建调用图，双向 BFS 传播（按 direction 过滤）；
-//  3. LLM 合成设计文档初稿，沉淀 code_change_log。
+//  3. LLM 合成变更说明与影响分析，沉淀 code_change_log。
 func (s *ImpactService) Analyze(ctx context.Context, req *ImpactAnalyzeReq) (*ImpactAnalyzeResult, error) {
 	if req.MaxDepth <= 0 {
 		req.MaxDepth = 2
@@ -220,7 +220,7 @@ func (s *ImpactService) Analyze(ctx context.Context, req *ImpactAnalyzeReq) (*Im
 		}
 	}
 
-	// LLM 合成开发设计文档初稿 + 沉淀 code_change_log
+	// LLM 合成变更说明与影响分析 + 沉淀 code_change_log
 	if err := s.synthesizeDesignDoc(ctx, req, result); err != nil {
 		return nil, err
 	}
@@ -270,7 +270,7 @@ func mergeFuncSeeds(prev, next []*FuncRef) []*FuncRef {
 // locateFuncsByQuery 自然语言变更描述定位变更函数：
 //  1. 混合召回（向量 ∪ 关键词，不做跨模块扩充）相关文档；
 //  2. 相关度过滤：文档必须与描述共享有效词元（英文词 / 中文二元组），
-//     避免把仅向量弱相关的无关函数当作"直接修改"种子导致设计文档胡编；
+//     避免把仅向量弱相关的无关函数当作"直接修改"种子导致变更说明胡编；
 //  3. 无可信相关函数时返回明确引导，而不是基于错误前提继续分析。
 func (s *ImpactService) locateFuncsByQuery(ctx context.Context, repoID int64, query string) ([]*FuncRef, error) {
 	docs, ragErr := s.search.RetrieveHybridDocs(ctx, repoID, query)
@@ -830,15 +830,15 @@ func (s *ImpactService) docMapForResult(repoID int64, result *ImpactAnalyzeResul
 	return docMap
 }
 
-// synthesizeDesignDoc 调用 LLM 合成迭代影响分析与开发设计文档初稿，并沉淀到 code_change_log。
+// synthesizeDesignDoc 调用 LLM 合成迭代影响分析的变更说明，并沉淀到 code_change_log。
 func (s *ImpactService) synthesizeDesignDoc(ctx context.Context, req *ImpactAnalyzeReq, result *ImpactAnalyzeResult) error {
 	if strings.TrimSpace(s.llmBaseURL) == "" {
-		logger.Warn(ctx, "AI 服务未配置，跳过设计文档合成与变更日志沉淀")
+		logger.Warn(ctx, "AI 服务未配置，跳过变更说明合成与变更日志沉淀")
 		return nil
 	}
 
 	system := "你是一名资深架构师。请根据代码知识库 Wiki 业务文档，对本次代码迭代做影响分析，" +
-		"输出开发设计文档初稿。必须严格输出 JSON（不要输出任何其他内容），字段如下：" +
+		"输出本次迭代的变更说明与影响分析。必须严格输出 JSON（不要输出任何其他内容），字段如下：" +
 		`{"change_summary":"本次迭代变更摘要（改动点、目的）",` +
 		`"business_impact":"业务影响范围（列出受影响的模块与函数、调用链风险）",` +
 		`"attention":"上线注意事项与回归测试建议"}`
@@ -846,11 +846,11 @@ func (s *ImpactService) synthesizeDesignDoc(ctx context.Context, req *ImpactAnal
 	sched, err := chatLLM(ctx, s.llmBaseURL, s.chatTimeout, system,
 		buildImpactUserPrompt(result), "", false, estimateImpactTokens(result))
 	if err != nil {
-		return common.WrapError(common.CodeUpstreamError, "AI 服务合成设计文档失败，请稍后重试", err)
+		return common.WrapError(common.CodeUpstreamError, "AI 服务合成变更说明失败，请稍后重试", err)
 	}
 	doc, err := parseImpactDesignJSON(sched.Answer)
 	if err != nil {
-		logger.Warn(ctx, "设计文档 JSON 解析失败，跳过沉淀: %v", err)
+		logger.Warn(ctx, "变更说明 JSON 解析失败，跳过沉淀: %v", err)
 		// 解析失败不阻断影响分析本身，返回可读文本兜底
 		doc = &ImpactDesignDoc{
 			ChangeSummary:  truncate(sched.Answer, 2000),
@@ -1062,7 +1062,7 @@ func buildImpactUserPrompt(result *ImpactAnalyzeResult) string {
 			sb.WriteString(fmt.Sprintf("- [深度%d] %s.%s %s\n  摘要: %s\n", f.Depth, f.Module, f.Func, f.Edge, f.Summary))
 		}
 	}
-	sb.WriteString("\n请基于以上信息输出 JSON 格式的开发设计文档初稿。")
+	sb.WriteString("\n请基于以上信息输出 JSON 格式的变更说明与影响分析。")
 	return sb.String()
 }
 
