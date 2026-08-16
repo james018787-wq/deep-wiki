@@ -105,7 +105,6 @@ async function doLogin() {
     radial-gradient(circle at 50% 50%, rgba(255,255,255,.95) 0%, rgba(199,210,254,.55) 7%, transparent 20%),
     radial-gradient(circle at 50% 50%, rgba(139,92,246,.5) 0%, transparent 58%),
     radial-gradient(circle at 50% 50%, rgba(34,211,238,.38) 0%, transparent 72%);
-  filter: blur(16px);
   animation: galaxyPulse 9s ease-in-out infinite alternate;
 }
 @keyframes galaxyPulse {
@@ -114,10 +113,12 @@ async function doLogin() {
 }
 
 /* 星云（大范围模糊色团，缓慢漂移） */
-.nebula { position: absolute; border-radius: 50%; filter: blur(72px); opacity: .55; mix-blend-mode: screen; }
-.nebula.n1 { width: 540px; height: 440px; left: -8%; top: -8%; background: radial-gradient(circle, rgba(139,92,246,.6), transparent 70%); animation: drift1 26s ease-in-out infinite alternate; }
-.nebula.n2 { width: 620px; height: 480px; right: -12%; bottom: -10%; background: radial-gradient(circle, rgba(34,211,238,.5), transparent 70%); animation: drift2 34s ease-in-out infinite alternate; }
-.nebula.n3 { width: 400px; height: 320px; left: 52%; top: 58%; background: radial-gradient(circle, rgba(236,72,153,.38), transparent 70%); animation: drift3 40s ease-in-out infinite alternate; }
+/* 星云（大范围柔和色团，缓慢漂移）：
+   用自带透明度的径向渐变实现柔和过渡，避免 filter:blur（耗性能） */
+.nebula { position: absolute; border-radius: 50%; opacity: .55; mix-blend-mode: screen; }
+.nebula.n1 { width: 560px; height: 460px; left: -8%; top: -8%; background: radial-gradient(circle, rgba(139,92,246,.55), transparent 68%); animation: drift1 26s ease-in-out infinite alternate; }
+.nebula.n2 { width: 640px; height: 500px; right: -12%; bottom: -10%; background: radial-gradient(circle, rgba(34,211,238,.45), transparent 68%); animation: drift2 34s ease-in-out infinite alternate; }
+.nebula.n3 { width: 420px; height: 340px; left: 52%; top: 58%; background: radial-gradient(circle, rgba(236,72,153,.34), transparent 68%); animation: drift3 40s ease-in-out infinite alternate; }
 
 @keyframes drift1 { from { transform: translate(0,0) scale(1); } to { transform: translate(60px, 40px) scale(1.12); } }
 @keyframes drift2 { from { transform: translate(0,0) scale(1); } to { transform: translate(-70px, -50px) scale(1.15); } }
@@ -157,8 +158,9 @@ async function doLogin() {
 }
 @keyframes floaty { from { transform: translateY(0); } to { transform: translateY(-24px); } }
 
-/* 星星（三层不同大小/密度，远近分层 + 视差漂移：远层慢、近层快） */
-.stars { position: absolute; inset: -60px; pointer-events: none; }
+/* 星星（三层不同大小/密度，远近分层 + 视差漂移）。
+   漂移用 transform 动画（合成器友好），避免 background-position 逐帧重绘拖慢页面 */
+.stars { position: absolute; inset: -160px; pointer-events: none; }
 .stars.s-sm {
   background-image:
     radial-gradient(2px 2px at 22px 30px, rgba(255,255,255,.9), transparent 55%),
@@ -168,7 +170,7 @@ async function doLogin() {
     radial-gradient(2px 2px at 190px 220px, rgba(186,230,253,.8), transparent 55%),
     radial-gradient(2px 2px at 210px 100px, rgba(255,255,255,.75), transparent 55%);
   background-size: 240px 240px;
-  animation: twinkle 5s ease-in-out infinite, driftStar-sm 110s linear infinite;
+  animation: twinkle 5s ease-in-out infinite, starDrift 120s linear infinite;
 }
 .stars.s-md {
   background-image:
@@ -178,7 +180,7 @@ async function doLogin() {
     radial-gradient(3px 3px at 80px 230px, rgba(199,210,254,.9), transparent 58%),
     radial-gradient(3px 3px at 230px 180px, #fff, transparent 58%);
   background-size: 280px 280px;
-  animation: twinkle 7s ease-in-out -2s infinite, driftStar-md 75s linear infinite;
+  animation: twinkle 7s ease-in-out -2s infinite, starDrift 80s linear infinite reverse;
 }
 .stars.s-lg {
   background-image:
@@ -187,14 +189,14 @@ async function doLogin() {
     radial-gradient(4px 4px at 250px 70px, rgba(186,230,253,1), transparent 62%),
     radial-gradient(4px 4px at 30px 260px, #fff, transparent 62%);
   background-size: 320px 320px;
-  filter: drop-shadow(0 0 3px rgba(255,255,255,.85));
-  animation: twinkle 9s ease-in-out -4s infinite, driftStar-lg 48s linear infinite;
+  animation: twinkle 9s ease-in-out -4s infinite, starDrift 50s linear infinite;
 }
 @keyframes twinkle { 0%, 100% { opacity: .7; } 50% { opacity: 1; } }
-/* 视差漂移：背景位移动一个瓦片尺寸即无缝循环；远层慢、近层快 */
-@keyframes driftStar-sm { from { background-position: 0 0; } to { background-position: 240px 160px; } }
-@keyframes driftStar-md { from { background-position: 0 0; } to { background-position: 280px 190px; } }
-@keyframes driftStar-lg { from { background-position: 0 0; } to { background-position: 320px 220px; } }
+/* 视差漂移：远层慢、近层快（transform，仅合成器开销） */
+@keyframes starDrift {
+  from { transform: translate(0, 0); }
+  to   { transform: translate(-120px, -80px); }
+}
 
 /* 流星 */
 .shoot {
@@ -238,8 +240,8 @@ async function doLogin() {
   animation: cardGlow 5.5s ease-in-out infinite alternate;
 }
 @keyframes cardGlow {
-  from { opacity: .72; transform: scale(.98); }
-  to   { opacity: 1.1; transform: scale(1.03); }
+  from { opacity: .72; }
+  to   { opacity: 1.1; }
 }
 .login-card {
   background: rgba(18, 26, 44, 0.8);
@@ -282,4 +284,10 @@ async function doLogin() {
 }
 .brand-line .tagline { color: #51698c; font-size: 12px; letter-spacing: 2px; margin-top: 6px; }
 .msg { margin-top: 12px; }
+
+/* 用户偏好减少动态效果时关闭全部动画（省电/防卡） */
+@media (prefers-reduced-motion: reduce) {
+  .cosmic-bg * { animation: none !important; }
+  .login-wrap::before { animation: none !important; }
+}
 </style>
