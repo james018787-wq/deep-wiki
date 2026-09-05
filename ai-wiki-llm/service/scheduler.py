@@ -225,6 +225,10 @@ class Scheduler:
         self._cb = CircuitBreaker(self._r, global_cfg.circuit_ttl_sec, global_cfg.circuit_failure_threshold)
         self._rl = RateLimiter(self._r, global_cfg.ratelimit_window_sec)
 
+    def pool_snapshot(self) -> dict:
+        """模型池配置快照（脱敏），供 /api/models 对外展示。"""
+        return self._pool.snapshot()
+
     def _client(self, m: ModelItem) -> OpenAI:
         with self._client_lock:
             if m.name not in self._clients:

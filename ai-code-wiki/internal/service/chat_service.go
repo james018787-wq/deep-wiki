@@ -118,7 +118,7 @@ func (s *ChatService) Ask(ctx context.Context, req *ChatAskReq) (*ChatAskResult,
 
 	estimated := estimateTokens(user)
 	sched, err := chatLLM(ctx, s.llmBaseURL, s.chatTimeout, system, user,
-		req.ForceModel, req.ForceHighQuality, estimated)
+		req.ForceModel, req.ForceHighQuality, estimated, UsageScenarioChat)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +236,7 @@ func (s *ChatService) rollupIfNeeded(ctx context.Context, sessionID, oldSummary 
 	}
 	newSummary := oldSummary
 	if res, err := chatLLM(ctx, s.llmBaseURL, s.chatTimeout, "你是对话摘要助手，把对话压缩为一段要点，保留关键事实（函数名、模块、结论），控制在 200 字内。",
-		"既有摘要：\n"+oldSummary+"\n\n待压缩的新对话：\n"+sb.String(), "", false, estimateTokens(sb.String())); err == nil {
+		"既有摘要：\n"+oldSummary+"\n\n待压缩的新对话：\n"+sb.String(), "", false, estimateTokens(sb.String()), UsageScenarioRollup); err == nil {
 		newSummary = strings.TrimSpace(res.Answer)
 	}
 	_ = s.chatStore.SaveMeta(&chatstore.SessionMeta{SessionID: sessionID, Summary: newSummary})

@@ -169,5 +169,11 @@ func Register(r *gin.Engine, h *handler.Handler) {
 		api.GET("/security/list", h.Security.List)
 		// 更新安全发现状态（open/fixed/false_positive）
 		api.PUT("/security/:id/status", h.Security.UpdateStatus)
+
+		// ========== 模型配置与用量 ==========
+		// 模型池配置（脱敏，转发 ai-wiki-llm /api/models）
+		api.GET("/model/list", h.Usage.ListModels)
+		// LLM 消耗统计（按模型/天/场景聚合）
+		api.GET("/model/usage", h.Usage.GetUsage)
 	}
 }

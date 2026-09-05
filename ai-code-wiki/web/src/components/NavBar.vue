@@ -8,6 +8,7 @@
       <router-link to="/tasks" active-class="active">任务管理</router-link>
       <router-link to="/repos" active-class="active">仓库管理</router-link>
       <router-link to="/security" active-class="active">安全扫描</router-link>
+      <router-link to="/models" active-class="active">模型与用量</router-link>
     </div>
     <div class="spacer"></div>
     <span class="who">{{ userNick }}</span>

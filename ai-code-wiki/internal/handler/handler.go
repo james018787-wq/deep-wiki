@@ -19,6 +19,7 @@ type Handler struct {
 	Chat        *ChatHandler
 	Auth        *AuthHandler
 	Security    *SecurityHandler
+	Usage       *UsageHandler
 }
 
 // NewHandler 构建处理器聚合对象。
@@ -35,5 +36,6 @@ func NewHandler(svc *service.Service) *Handler {
 	h.Chat = NewChatHandler(svc)
 	h.Auth = NewAuthHandler(svc)
 	h.Security = NewSecurityHandler(svc)
+	h.Usage = NewUsageHandler(svc)
 	return h
 }

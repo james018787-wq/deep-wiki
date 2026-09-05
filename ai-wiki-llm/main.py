@@ -25,17 +25,16 @@ from schema.models import (
 )
 from service.doc_generator import DocGenerator
 from service.embed_service import EmbedService
-from service.llm_service import LLMService
 from service.scheduler import Scheduler, build_scheduler
 from utils.errors import ServiceError
 from utils.logging import logger
 
 # ============ 依赖初始化 ============
-llm_service = LLMService()
 embed_service = EmbedService()
-doc_generator = DocGenerator(llm_service)
 # 多模型调度器（优先低价，失败自动降级；Redis 分布式熔断/限流）
 scheduler: Scheduler = build_scheduler()
+# 文档生成统一走调度器（与 /api/chat 共用模型池，返回 token/cost 供消耗统计）
+doc_generator = DocGenerator(scheduler)
 
 # ============ 应用 ============
 app = FastAPI(
@@ -105,6 +104,16 @@ def chat(req: ChatRequest) -> ApiResponse:
         estimated_tokens=req.estimated_tokens,
     )
     return ApiResponse(code=0, message="success", data=ChatResponse(**data).model_dump())
+
+
+# ============ 接口：模型池与用量 ============
+@app.get("/api/models", response_model=ApiResponse)
+def list_models() -> ApiResponse:
+    """返回模型池配置（脱敏，不含 api_key）与全局调度参数。
+
+    供 Go 侧 /model/list 转发展示当前系统配置了哪些模型。
+    """
+    return ApiResponse(code=0, message="success", data=scheduler.pool_snapshot())
 
 
 # ============ 健康检查 ============

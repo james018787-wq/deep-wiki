@@ -361,7 +361,7 @@ func (s *SearchService) askLLM(ctx context.Context, query, contextPrompt string,
 		"如果文档信息不足以回答，请如实说明，不要编造。"
 	user := contextPrompt + "\n\n用户问题: " + query + "\n请基于以上文档作答。"
 
-	sched, err := chatLLM(ctx, s.llmBaseURL, s.chatTimeout, system, user, forceModel, forceHighQuality, estimatedTokens)
+	sched, err := chatLLM(ctx, s.llmBaseURL, s.chatTimeout, system, user, forceModel, forceHighQuality, estimatedTokens, UsageScenarioSearch)
 	if err != nil {
 		return nil, err
 	}

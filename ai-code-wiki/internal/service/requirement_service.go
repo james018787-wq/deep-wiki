@@ -106,7 +106,7 @@ func (s *RequirementService) Analyze(ctx context.Context, req *AnalyzeReq) (*Ana
 	// step4: 经 ai-wiki-llm 多模型调度器调用 LLM（低价优先、失败降级在 Python 侧完成），带超时控制
 	estimated := estimateTokens(user)
 	sched, err := chatLLM(ctx, s.llmBaseURL, s.chatTimeout, system, user,
-		req.ForceModel, req.ForceHighQuality, estimated)
+		req.ForceModel, req.ForceHighQuality, estimated, UsageScenarioRequirement)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +124,7 @@ func (s *RequirementService) Analyze(ctx context.Context, req *AnalyzeReq) (*Ana
 		logger.Info(ctx, "[requirement] 首次原始输出(截断): %.1200s", raw)
 		retryUser := user + "\n\n【重要】请严格只输出一个合法 JSON 对象，不要包含任何 markdown 代码块、解释或前后缀文本。"
 		if sched2, err2 := chatLLM(ctx, s.llmBaseURL, s.chatTimeout, system, retryUser,
-			req.ForceModel, req.ForceHighQuality, estimated); err2 == nil {
+			req.ForceModel, req.ForceHighQuality, estimated, UsageScenarioRequirement); err2 == nil {
 			if p2, e2 := parseAnalyzeJSON(sched2.Answer); e2 == nil {
 				sched = sched2
 				raw = sched2.Answer

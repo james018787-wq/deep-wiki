@@ -26,12 +26,21 @@ type chatLLMResult struct {
 	RetriedModels []string
 }
 
+// usageRecorder LLM 消耗记录器（NewService 注入），所有经 chatLLM 的调用完成后记录消耗。
+var usageRecorder *UsageService
+
+// SetUsageRecorder 注入消耗记录器（由 NewService 调用）。
+func SetUsageRecorder(u *UsageService) {
+	usageRecorder = u
+}
+
 // chatLLM 经 ai-wiki-llm 多模型调度器调用 LLM。
 //
 // 多模型调度（低价优先、失败自动降级、Redis 熔断/限流）全部在 Python 侧完成，
 // Go 仅透传调度参数并透出返回的调度元信息，保持「Go 编排 / Python 调模型」的单一路径。
+// scenario 标记调用场景（doc/chat/search/impact/...），调用成功后记录 token/cost 消耗。
 func chatLLM(ctx context.Context, baseURL string, timeout time.Duration, system, user string,
-	forceModel string, forceHighQuality bool, estimatedTokens int) (*chatLLMResult, error) {
+	forceModel string, forceHighQuality bool, estimatedTokens int, scenario string) (*chatLLMResult, error) {
 
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, common.NewError(common.CodeInvalidState, "AI 服务未配置")
@@ -86,6 +95,12 @@ func chatLLM(ctx context.Context, baseURL string, timeout time.Duration, system,
 		}
 		return nil, common.WrapError(common.CodeUpstreamError, msg,
 			fmt.Errorf("ai-wiki-llm code=%d msg=%s", apiResp.Code, apiResp.Message))
+	}
+
+	// 记录本次 LLM 调用消耗（best-effort，落库失败不影响业务）
+	if usageRecorder != nil {
+		usageRecorder.Record(ctx, apiResp.Data.UsedModel, scenario,
+			apiResp.Data.TokenInput, apiResp.Data.TokenOutput, apiResp.Data.Cost)
 	}
 
 	return &chatLLMResult{

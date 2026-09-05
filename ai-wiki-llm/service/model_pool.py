@@ -129,6 +129,33 @@ class ModelPool:
         with self._lock:
             return self._global
 
+    def snapshot(self) -> dict:
+        """导出模型池配置（脱敏，不含 api_key）与全局调度参数，供对外展示。"""
+        with self._lock:
+            models = [
+                {
+                    "name": m.name,
+                    "provider": m.provider,
+                    "base_url": m.base_url,
+                    "input_price": m.input_price,
+                    "output_price": m.output_price,
+                    "max_context": m.max_context,
+                    "rpm": m.rpm,
+                    "tpm": m.tpm,
+                    "enable": m.enable,
+                }
+                for m in self._models
+            ]
+            g = self._global
+            global_cfg = {
+                "max_retry_switch": g.max_retry_switch,
+                "circuit_ttl_sec": g.circuit_ttl_sec,
+                "circuit_failure_threshold": g.circuit_failure_threshold,
+                "ratelimit_window_sec": g.ratelimit_window_sec,
+                "high_quality_price_threshold": g.high_quality_price_threshold,
+            }
+        return {"models": models, "global": global_cfg}
+
     def get(self, name: str) -> Optional[ModelItem]:
         """按名称查询启用模型；未启用返回 None。"""
         with self._lock:

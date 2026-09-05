@@ -5,7 +5,7 @@ import re
 from typing import Any
 
 from schema.models import GenerateDiffLogResponse, GenerateDocResponse
-from service.llm_service import LLMService
+from service.scheduler import Scheduler
 from utils.errors import LLMError
 from utils.logging import logger
 
@@ -31,10 +31,26 @@ DIFF_LOG_SYSTEM_PROMPT = """你是一名发布评审专家，请对比新旧代�
 
 
 class DocGenerator:
-    """文档生成服务：根据代码生成标准化业务文档 JSON。"""
+    """文档生成服务：根据代码生成标准化业务文档 JSON。
 
-    def __init__(self, llm: LLMService) -> None:
-        self._llm = llm
+    统一经多模型调度器（model_pool.yaml）调用模型，与 /api/chat 共用同一模型池，
+    返回文档内容与调用元信息（used_model / input_token / output_token / cost），
+    供上游统计模型消耗。
+    """
+
+    def __init__(self, scheduler: Scheduler) -> None:
+        self._scheduler = scheduler
+
+    def _call(self, system: str, user: str) -> tuple[str, dict[str, Any]]:
+        """调用调度器，返回 (回答文本, 调用元信息)。"""
+        res = self._scheduler.chat(system=system, user=user)
+        meta = {
+            "used_model": res.get("used_model", ""),
+            "input_token": res.get("input_token", 0),
+            "output_token": res.get("output_token", 0),
+            "cost": res.get("cost", 0.0),
+        }
+        return res.get("answer", ""), meta
 
     def generate_doc(self, module_name: str, file_path: str, code_content: str) -> dict[str, Any]:
         """根据代码生成标准化业务文档。
@@ -45,14 +61,15 @@ class DocGenerator:
             code_content: 函数源码片段（最小切片单元=单个函数）
 
         Returns:
-            标准化文档 dict（见 schema.GenerateDocResponse）
+            标准化文档 dict（见 schema.GenerateDocResponse），附带调用元信息字段
+            used_model / input_token / output_token / cost。
         """
         user_content = (
             f"所属模块: {module_name}\n"
             f"文件路径: {file_path}\n"
             f"函数源码:\n```\n{code_content}\n```"
         )
-        raw = self._llm.chat(DOC_GENERATE_SYSTEM_PROMPT, user_content)
+        raw, meta = self._call(DOC_GENERATE_SYSTEM_PROMPT, user_content)
         data = self._parse_json(raw)
 
         # 兜底默认值，保证字段完整性
@@ -67,16 +84,18 @@ class DocGenerator:
             rely_modules=self._dump_rely_modules(data.get("rely_modules", [])),
             risk_point=str(data.get("risk_point", "")),
         )
-        return result.model_dump()
+        out = result.model_dump()
+        out.update(meta)
+        return out
 
     def generate_diff_log(self, old_code: str, new_code: str) -> dict[str, str]:
         """代码 diff 生成变更摘要。
 
         Returns:
-            变更摘要 dict（见 schema.GenerateDiffLogResponse）
+            变更摘要 dict（见 schema.GenerateDiffLogResponse），附带调用元信息字段。
         """
         user_content = f"变更前代码:\n```\n{old_code}\n```\n\n变更后代码:\n```\n{new_code}\n```"
-        raw = self._llm.chat(DIFF_LOG_SYSTEM_PROMPT, user_content)
+        raw, meta = self._call(DIFF_LOG_SYSTEM_PROMPT, user_content)
         data = self._parse_json(raw)
 
         result = GenerateDiffLogResponse(
@@ -84,7 +103,9 @@ class DocGenerator:
             business_impact=str(data.get("business_impact", "")),
             attention=str(data.get("attention", "")),
         )
-        return result.model_dump()
+        out = result.model_dump()
+        out.update(meta)
+        return out
 
     @staticmethod
     def _parse_json(raw: str) -> dict[str, Any]:

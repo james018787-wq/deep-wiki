@@ -775,6 +775,11 @@ func (s *TaskService) generateDoc(moduleName, filePath, codeContent string) (*ll
 	if strings.TrimSpace(data.Summary) == "" && strings.TrimSpace(data.ProcessFlow) == "" {
 		return nil, "", fmt.Errorf("LLM生成文档内容为空")
 	}
+	// 记录文档生成消耗（best-effort，落库失败不影响任务）
+	if usageRecorder != nil {
+		usageRecorder.Record(context.Background(), data.UsedModel, UsageScenarioDoc,
+			data.InputToken, data.OutputToken, data.Cost)
+	}
 	return &data, string(apiResp.Data), nil
 }
 
@@ -844,15 +849,19 @@ type llmAPIResponse struct {
 	Data    json.RawMessage `json:"data"`
 }
 
-// llmDocData 标准化业务文档字段（对应 code_function_doc）。
+// llmDocData 标准化业务文档字段（对应 code_function_doc），附带调用元信息。
 type llmDocData struct {
-	FuncName    string `json:"func_name"`
-	Summary     string `json:"summary"`
-	InputDesc   string `json:"input_desc"`
-	OutputDesc  string `json:"output_desc"`
-	ProcessFlow string `json:"process_flow"`
-	RelyModules string `json:"rely_modules"`
-	RiskPoint   string `json:"risk_point"`
+	FuncName    string  `json:"func_name"`
+	Summary     string  `json:"summary"`
+	InputDesc   string  `json:"input_desc"`
+	OutputDesc  string  `json:"output_desc"`
+	ProcessFlow string  `json:"process_flow"`
+	RelyModules string  `json:"rely_modules"`
+	RiskPoint   string  `json:"risk_point"`
+	UsedModel   string  `json:"used_model"`
+	InputToken  int     `json:"input_token"`
+	OutputToken int     `json:"output_token"`
+	Cost        float64 `json:"cost"`
 }
 
 // ============ 任务状态流转 ============

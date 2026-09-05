@@ -844,7 +844,7 @@ func (s *ImpactService) synthesizeDesignDoc(ctx context.Context, req *ImpactAnal
 		`"attention":"上线注意事项与回归测试建议"}`
 
 	sched, err := chatLLM(ctx, s.llmBaseURL, s.chatTimeout, system,
-		buildImpactUserPrompt(result), "", false, estimateImpactTokens(result))
+		buildImpactUserPrompt(result), "", false, estimateImpactTokens(result), UsageScenarioImpact)
 	if err != nil {
 		return common.WrapError(common.CodeUpstreamError, "AI 服务合成变更说明失败，请稍后重试", err)
 	}
@@ -891,7 +891,7 @@ func (s *ImpactService) synthesizeFuncChanges(ctx context.Context, result *Impac
 		`"attention":"该函数改动上线的注意事项与回归建议"}]}`
 
 	sched, err := chatLLM(ctx, s.llmBaseURL, s.chatTimeout, system,
-		buildFuncChangePrompt(result), "", false, 400+len(changed)*250)
+		buildFuncChangePrompt(result), "", false, 400+len(changed)*250, UsageScenarioFuncChange)
 	if err != nil {
 		logger.Warn(ctx, "函数个性化变更记录合成失败，退化本地拼接: %v", err)
 		return localFuncChanges(result)

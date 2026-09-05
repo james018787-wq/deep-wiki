@@ -44,6 +44,7 @@ type Service struct {
 	Chat        *ChatService
 	Auth        *AuthService
 	SecretScan  *SecretScanService
+	Usage       *UsageService
 
 	// ChatStore 会话记忆存储（Redis 优先，降级内存）
 	ChatStore chatstore.Store
@@ -90,6 +91,8 @@ func NewService(db *gorm.DB, cfg *config.Config) (*Service, error) {
 	secretSvc := NewSecretScanService(db, cfg)
 	taskSvc := NewTaskService(db, cfg, vc, queue, secretSvc)
 	chatStore := chatstore.New(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.TTLDays)
+	// LLM 消耗记录器（chatLLM 与文档生成路径共用）
+	SetUsageRecorder(NewUsageService(db, cfg.LLM.BaseURL))
 	s := &Service{
 		db:          db,
 		llmBaseURL:  cfg.LLM.BaseURL,
@@ -105,6 +108,7 @@ func NewService(db *gorm.DB, cfg *config.Config) (*Service, error) {
 		Chat:        NewChatService(db, cfg, searchSvc, chatStore),
 		Auth:        NewAuthService(db),
 		SecretScan:  secretSvc,
+		Usage:       NewUsageService(db, cfg.LLM.BaseURL),
 		ChatStore:   chatStore,
 		TaskQueue:   queue,
 		TaskWorker:  NewTaskWorker(queue, taskSvc, vc, cfg.TaskQueue.MaxRetry, cfg.TaskQueue.Concurrency),
