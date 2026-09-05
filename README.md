@@ -35,7 +35,7 @@
 
 ## 📸 界面预览
 
-| 登录页（宇宙空间背景） | 文档列表 | 智能问答 |
+| 登录页 | 文档列表 | 智能问答 |
 |---|---|---|
 | ![登录页](docs/screenshots/login.png) | ![文档列表](docs/screenshots/docs.png) | ![智能问答](docs/screenshots/chat.png) |
 
