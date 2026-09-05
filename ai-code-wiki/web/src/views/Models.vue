@@ -9,6 +9,7 @@
             <th>模型</th>
             <th>供应商</th>
             <th>状态</th>
+            <th>运行状态</th>
             <th>输入价格(元/1k)</th>
             <th>输出价格(元/1k)</th>
             <th>上下文</th>
@@ -20,13 +21,20 @@
             <td><b>{{ m.name }}</b></td>
             <td>{{ m.provider }}</td>
             <td><span class="status" :class="m.enable ? 'ok' : 'muted'">{{ m.enable ? '启用' : '停用' }}</span></td>
+            <td>
+              <span v-if="statusOf(m.name).circuit_open" class="status warn">熔断中 {{ statusOf(m.name).circuit_ttl }}s</span>
+              <span v-else-if="!m.enable" class="status muted">停用</span>
+              <span v-else-if="!statusOf(m.name).key_ready" class="status muted">密钥未配置</span>
+              <span v-else class="status ok">正常</span>
+              <div class="hint" v-if="statusOf(m.name).degrade_count > 0">累计降级 {{ statusOf(m.name).degrade_count }} 次</div>
+            </td>
             <td>{{ m.input_price }}</td>
             <td>{{ m.output_price }}</td>
             <td>{{ m.max_context > 0 ? m.max_context.toLocaleString() : '-' }}</td>
             <td>{{ m.rpm }} / {{ m.tpm }}</td>
           </tr>
           <tr v-if="models.length === 0">
-            <td colspan="7" class="empty">暂无模型配置（model_pool.yaml 为空或 AI 服务不可用）</td>
+            <td colspan="8" class="empty">暂无模型配置（model_pool.yaml 为空或 AI 服务不可用）</td>
           </tr>
         </tbody>
       </table>
@@ -107,6 +115,7 @@ import { apiRequest } from '../api'
 const models = ref([])
 const global = ref({})
 const modelsError = ref('')
+const statusMap = ref({})
 const rows = ref([])
 const total = ref(null)
 const loading = ref(false)
@@ -114,6 +123,10 @@ const usageError = ref('')
 const range = ref('7')
 const scenario = ref('')
 const groupBy = ref('model')
+
+function statusOf(name) {
+  return statusMap.value[name] || {}
+}
 
 function fmt(n) {
   return Number(n || 0).toLocaleString('zh-CN')
@@ -126,6 +139,17 @@ async function loadModels() {
     global.value = data.global || {}
   } catch (e) {
     modelsError.value = '模型配置加载失败: ' + e.message
+  }
+}
+
+async function loadStatus() {
+  try {
+    const data = await apiRequest('/model/status')
+    const map = {}
+    for (const m of (data.models || [])) map[m.name] = m
+    statusMap.value = map
+  } catch (e) {
+    /* 状态接口失败不阻塞页面 */
   }
 }
 
@@ -145,6 +169,7 @@ async function loadUsage() {
 
 onMounted(() => {
   loadModels()
+  loadStatus()
   loadUsage()
 })
 </script>
@@ -174,4 +199,5 @@ onMounted(() => {
 }
 .status.ok { color: #067647; }
 .status.muted { color: #667085; }
+.status.warn { color: #b54708; background: #fef0c7; padding: 2px 6px; border-radius: 4px; }
 </style>

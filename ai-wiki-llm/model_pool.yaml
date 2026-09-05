@@ -25,7 +25,7 @@ model_pool:
     max_context: 100000
     rpm: 60
     tpm: 100000
-    enable: false
+    enable: true
 
   - name: qwen-plus
     provider: aliyun
@@ -36,7 +36,7 @@ model_pool:
     max_context: 100000
     rpm: 30
     tpm: 50000
-    enable: false
+    enable: true
 
 # 全局调度参数（缺省时使用默认值，见 service/model_pool.py）
 global:

@@ -129,6 +129,11 @@ class ModelPool:
         with self._lock:
             return self._global
 
+    def all_models(self) -> list[ModelItem]:
+        """返回全部模型配置（含停用），用于状态展示。"""
+        with self._lock:
+            return list(self._models)
+
     def snapshot(self) -> dict:
         """导出模型池配置（脱敏，不含 api_key）与全局调度参数，供对外展示。"""
         with self._lock:
@@ -169,6 +174,7 @@ class ModelPool:
 
         过滤规则：
           - enable=false 排除；
+          - api_key 为空（环境变量未配置）排除——无密钥模型不参与调度，避免拖慢降级与误熔断；
           - 预估上下文超过 max_context 的模型排除；
           - force_high_quality=true 时，过滤平均单价低于阈值的低价模型。
         """
@@ -178,6 +184,9 @@ class ModelPool:
         list_ = []
         for m in models:
             if not m.enable:
+                continue
+            if not m.api_key or not m.base_url:
+                logger.info("[model_pool] 模型 %s 未配置密钥，暂不参与调度", m.name)
                 continue
             if estimated_tokens > 0 and m.max_context > 0 and m.max_context < estimated_tokens:
                 continue

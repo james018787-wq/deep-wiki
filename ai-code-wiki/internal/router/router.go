@@ -173,6 +173,8 @@ func Register(r *gin.Engine, h *handler.Handler) {
 		// ========== 模型配置与用量 ==========
 		// 模型池配置（脱敏，转发 ai-wiki-llm /api/models）
 		api.GET("/model/list", h.Usage.ListModels)
+		// 模型运行状态（熔断/限流/降级次数，转发 ai-wiki-llm /api/models/status）
+		api.GET("/model/status", h.Usage.ListModelStatus)
 		// LLM 消耗统计（按模型/天/场景聚合）
 		api.GET("/model/usage", h.Usage.GetUsage)
 	}

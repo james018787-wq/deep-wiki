@@ -29,6 +29,18 @@ func (h *UsageHandler) ListModels(c *gin.Context) {
 	common.Success(c, info)
 }
 
+// ListModelStatus 模型运行状态（熔断/限流/降级次数）。
+//
+//	GET /api/v1/model/status
+func (h *UsageHandler) ListModelStatus(c *gin.Context) {
+	info, err := h.svc.Usage.ListModelStatus(c.Request.Context())
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	common.Success(c, info)
+}
+
 // GetUsage 消耗统计。
 //
 //	GET /api/v1/model/usage?days=7&scenario=&group_by=model&since=&until=

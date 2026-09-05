@@ -124,7 +124,9 @@ services:
       EMBEDDING_MODEL: "BAAI/bge-large-zh-v1.5"
       # 多模型调度（/api/chat）：模型池见 ai-wiki-llm/model_pool.yaml，密钥经环境变量注入
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY}"
-      # DASHSCOPE_API_KEY: "your-dashscope-key"
+      # 备用模型（多模型降级）：阿里云百炼 qwen-turbo/plus，配置后自动参与调度
+      # 获取：https://bailian.console.aliyun.com → API-KEY
+      DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY}"
       # 分布式熔断/限流状态（redis，ai-code-wiki-redis 服务）
       REDIS_ADDR: "redis:6379"
     healthcheck:

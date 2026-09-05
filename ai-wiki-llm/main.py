@@ -116,6 +116,15 @@ def list_models() -> ApiResponse:
     return ApiResponse(code=0, message="success", data=scheduler.pool_snapshot())
 
 
+@app.get("/api/models/status", response_model=ApiResponse)
+def list_models_status() -> ApiResponse:
+    """返回各模型运行状态（熔断中 / 限流用量 / 连续失败 / 累计降级次数）。
+
+    供 Go 侧 /model/status 转发，前端「模型与用量」页展示调度健康度。
+    """
+    return ApiResponse(code=0, message="success", data=scheduler.pool_status())
+
+
 # ============ 健康检查 ============
 @app.get("/health")
 def health() -> dict:

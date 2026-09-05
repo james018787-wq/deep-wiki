@@ -82,6 +82,57 @@ type ModelPoolInfo struct {
 	Global map[string]interface{}  `json:"global"`
 }
 
+// ModelStatusItem 模型运行状态展示项。
+type ModelStatusItem struct {
+	Name         string `json:"name"`
+	Enable       bool   `json:"enable"`
+	KeyReady     bool   `json:"key_ready"`
+	CircuitOpen  bool   `json:"circuit_open"`
+	CircuitTTL   int64  `json:"circuit_ttl"`
+	FailureCount int64  `json:"failure_count"`
+	DegradeCount int64  `json:"degrade_count"`
+	RPMUsed      int64  `json:"rpm_used"`
+	TPMUsed      int64  `json:"tpm_used"`
+}
+
+// ModelStatusResult 模型运行状态结果。
+type ModelStatusResult struct {
+	Models []*ModelStatusItem `json:"models"`
+}
+
+// ListModelStatus 转发 Python /api/models/status，返回各模型运行状态（熔断/限流/降级次数）。
+func (s *UsageService) ListModelStatus(ctx context.Context) (*ModelStatusResult, error) {
+	if s.llmBase == "" {
+		return nil, common.NewError(common.CodeInvalidState, "AI 服务未配置")
+	}
+	url := s.llmBase + "/api/models/status"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, common.WrapError(common.CodeUpstreamError, "构建模型状态请求失败", err)
+	}
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return nil, common.WrapError(common.CodeUpstreamError, "AI 服务暂时不可用，请稍后重试", err)
+	}
+	defer resp.Body.Close()
+	var apiResp struct {
+		Code    int             `json:"code"`
+		Message string          `json:"message"`
+		Data    json.RawMessage `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&apiResp); err != nil {
+		return nil, common.WrapError(common.CodeUpstreamError, "模型状态响应解析失败", err)
+	}
+	if apiResp.Code != 0 {
+		return nil, common.WrapError(common.CodeUpstreamError, "获取模型状态失败: "+apiResp.Message, nil)
+	}
+	var result ModelStatusResult
+	if err := json.Unmarshal(apiResp.Data, &result); err != nil {
+		return nil, common.WrapError(common.CodeUpstreamError, "模型状态数据解析失败", err)
+	}
+	return &result, nil
+}
+
 // ListModels 转发 Python /api/models，返回当前模型池配置（脱敏）。
 func (s *UsageService) ListModels(ctx context.Context) (*ModelPoolInfo, error) {
 	if s.llmBase == "" {

@@ -32,8 +32,10 @@ from utils.logging import logger
 
 CIRCUIT_KEY_FMT = "ai_code_wiki:model:circuit:%s"
 CIRCUIT_COUNT_KEY_FMT = "ai_code_wiki:model:circuit:count:%s"
+DEGRADE_COUNT_KEY_FMT = "ai_code_wiki:model:degrade:%s"
 RPM_KEY_FMT = "ai_code_wiki:model:rpm:%s"
 TPM_KEY_FMT = "ai_code_wiki:model:tpm:%s"
+DEGRADE_COUNT_TTL = 7 * 24 * 3600  # 累计降级计数滚动窗口（7 天）
 
 # 连续失败计数 + 达标熔断（原子）
 CIRCUIT_LUA = """
@@ -147,6 +149,45 @@ class CircuitBreaker:
         except Exception as e:  # noqa: BLE001
             logger.warning("[scheduler] 标记模型不可用失败 model=%s err=%s", model, e)
 
+    def record_degrade(self, model: str) -> None:
+        """记录一次降级切换（该模型调用失败被跳过/切换），滚动窗口计数。"""
+        if self._r is None:
+            return
+        try:
+            self._r.incr(DEGRADE_COUNT_KEY_FMT % model)
+            self._r.expire(DEGRADE_COUNT_KEY_FMT % model, DEGRADE_COUNT_TTL)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[scheduler] 降级计数失败 model=%s err=%s", model, e)
+
+    def degrade_count(self, model: str) -> int:
+        """读取该模型累计降级次数。"""
+        if self._r is None:
+            return 0
+        try:
+            return int(self._r.get(DEGRADE_COUNT_KEY_FMT % model) or 0)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[scheduler] 降级计数读取失败 model=%s err=%s", model, e)
+            return 0
+
+    def status(self, model: str) -> dict:
+        """模型运行状态：熔断/连续失败/降级次数。"""
+        if self._r is None:
+            return {"circuit_open": False, "failure_count": 0, "degrade_count": 0}
+        try:
+            circuit_open = bool(self._r.exists(CIRCUIT_KEY_FMT % model))
+            ttl = self._r.ttl(CIRCUIT_KEY_FMT % model)
+            failure = int(self._r.get(CIRCUIT_COUNT_KEY_FMT % model) or 0)
+            degrade = int(self._r.get(DEGRADE_COUNT_KEY_FMT % model) or 0)
+            return {
+                "circuit_open": circuit_open,
+                "circuit_ttl": max(ttl, 0) if circuit_open else 0,
+                "failure_count": failure,
+                "degrade_count": degrade,
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[scheduler] 熔断状态读取失败 model=%s err=%s", model, e)
+            return {"circuit_open": False, "failure_count": 0, "degrade_count": 0}
+
 
 class RateLimiter:
     """模型级 RPM/TPM 分布式限流（Redis ZSET 滑动窗口）。
@@ -181,6 +222,24 @@ class RateLimiter:
         except Exception as e:  # noqa: BLE001
             logger.warning("[scheduler] 限流判断失败，fail-open model=%s err=%s", model, e)
             return True
+
+    def status(self, model: str) -> dict:
+        """当前窗口内 RPM/TPM 用量。"""
+        if self._r is None:
+            return {"rpm_used": 0, "tpm_used": 0}
+        try:
+            now = int(time.time())
+            rpm = self._r.zcount(RPM_KEY_FMT % model, now - self._window, now)
+            tpm = 0
+            vals = self._r.zrange(TPM_KEY_FMT % model, 0, -1)
+            for v in vals:
+                sep = v.find(":")
+                if sep > 0:
+                    tpm += int(v[:sep])
+            return {"rpm_used": rpm, "tpm_used": tpm}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[scheduler] 限流状态读取失败 model=%s err=%s", model, e)
+            return {"rpm_used": 0, "tpm_used": 0}
 
 
 class _ErrorKind:
@@ -229,6 +288,26 @@ class Scheduler:
         """模型池配置快照（脱敏），供 /api/models 对外展示。"""
         return self._pool.snapshot()
 
+    def pool_status(self) -> dict:
+        """各模型运行状态（熔断/限流/降级次数），供状态可视化。"""
+        models = self._pool.all_models()
+        statuses = []
+        for m in models:
+            st = self._cb.status(m.name)
+            rl = self._rl.status(m.name)
+            statuses.append({
+                "name": m.name,
+                "enable": m.enable,
+                "key_ready": bool(m.api_key and m.base_url),
+                "circuit_open": st["circuit_open"],
+                "circuit_ttl": st["circuit_ttl"],
+                "failure_count": st["failure_count"],
+                "degrade_count": st["degrade_count"],
+                "rpm_used": rl["rpm_used"],
+                "tpm_used": rl["tpm_used"],
+            })
+        return {"models": statuses}
+
     def _client(self, m: ModelItem) -> OpenAI:
         with self._client_lock:
             if m.name not in self._clients:
@@ -269,7 +348,8 @@ class Scheduler:
         max_switch = self._pool.global_config().max_retry_switch
         retried: list[str] = []
         switched = 0
-        for m in candidates:
+        total = len(candidates)
+        for idx, m in enumerate(candidates, start=1):
             if switched > max_switch:
                 break
             if self._cb.is_open(m.name):
@@ -290,15 +370,26 @@ class Scheduler:
                     self._cb.mark_unavailable(m.name)
                 else:
                     self._cb.record_failure(m.name)
+                self._cb.record_degrade(m.name)
                 retried.append(m.name)
                 switched += 1
-                logger.warning("[scheduler] 模型调用失败，切换下一档 model=%s err=%s", m.name, e)
+                logger.warning(
+                    "[scheduler] 模型调用失败，降级切换 model=%s kind=%s tried=%d/%d switched=%d err=%s",
+                    m.name, kind, idx, total, switched, e,
+                )
                 continue
 
             self._cb.record_success(m.name)
+            if switched > 0:
+                logger.warning(
+                    "[scheduler] 降级成功，最终使用 model=%s switched=%d retried=%s",
+                    m.name, switched, retried,
+                )
             return self._result(m, content, usage, switched, retried)
 
-        raise LLMError(message="所有模型服务暂时不可用，请稍后重试")
+        raise LLMError(
+            message=f"所有模型服务暂时不可用，请稍后重试（已尝试 {len(retried)}/{total} 个：{retried}）"
+        )
 
     def _call(self, m: ModelItem, system: str, user: str):
         """调用单个模型，返回 (content, usage)。"""
